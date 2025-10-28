@@ -94,16 +94,14 @@ Compilation succeeded!
 
 ### 2. Download the Plugin File and Class Label File
 
-Create a directory on your host system to store the plugin file and the labels file. For example, you might create `/opt/frigate-plugins/`.
+Create a directory on your host system to store the plugin file. For example, you might create `/opt/frigate-plugins/`.
 
 ```bash
 sudo mkdir -p /opt/frigate-plugins
 cd /opt/frigate-plugins
 sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/edgetpu_tfl.py
-sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/coco-labels.txt
 # Or, if you cloned the repo:
 # sudo cp path/to/cloned/repo/edgetpu_tfl.py /opt/frigate-plugins/
-# sudo cp path/to/cloned/repo/coco-labels.txt /opt/frigate-plugins/
 ```
 
 ### 3. Update docker-compose.yml
@@ -112,9 +110,7 @@ You need to add a volume mount to your Frigate service in your docker-compose.ym
 
 Locate your Frigate service definition and add the following two lines under the volumes: section. Adjust /opt/frigate-plugins/edgetpu_tfl.py if you stored the file elsewhere.
 
-The second line to add will make the COCO class labels accessible.
-
-The third line to add will make your YOLO model accessible.
+The second line to add will make your YOLO model accessible.
 
 ```yaml
 # ... other services ...
@@ -123,7 +119,6 @@ frigate:
   volumes:
     # ... existing volumes ...
     - /opt/frigate-plugins/edgetpu_tfl.py:/opt/frigate/frigate/detectors/plugins/edgetpu_tfl.py:ro
-    - /opt/frigate-plugins/coco-labels.txt:/opt/frigate/frigate/models/coco-labels.txt:ro
     - /opt/frigate-plugins/yolov9-t-converted_192_int8_edgetpu.tflite:/opt/frigate/models/yolov9-t-converted_192_int8_edgetpu.tflite:ro
   # ... rest of frigate service ...
 ```
@@ -148,7 +143,7 @@ detectors:
     # ... other detector settings ...
   model:
       model_type: yolo-generic
-      labelmap_path: /opt/frigate-plugins/coco-labels.txt
+      labelmap_path: /labelmap/coco-80.txt
       path: /opt/frigate-plugins/yolov9-t-converted_192_int8_edgetpu.tflite # Update this to your model's path
       # If your model has input dimensions other than 320x320 then add these lines:
       width: 192
