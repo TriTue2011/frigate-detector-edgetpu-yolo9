@@ -6,7 +6,7 @@ from pydantic import Field
 from typing_extensions import Literal
 
 from frigate.detectors.detection_api import DetectionApi
-from frigate.detectors.detector_config import BaseDetectorConfig
+from frigate.detectors.detector_config import BaseDetectorConfig, ModelTypeEnum
 from frigate.util.model import post_process_yolo
 
 import time
@@ -19,17 +19,19 @@ except ModuleNotFoundError:
 
 logger = logging.getLogger(__name__)
 
-DETECTOR_KEY = "edgetpu_multi"
+DETECTOR_KEY = "edgetpu"
 
 class EdgeTpuDetectorConfig(BaseDetectorConfig):
     type: Literal[DETECTOR_KEY]
     device: str = Field(default=None, title="Device Type")
+    # model_type inherited from BaseDetectorConfig, but can override default
+
 
 class EdgeTpuTfl(DetectionApi):
     type_key = DETECTOR_KEY
 
     def __init__(self, detector_config: EdgeTpuDetectorConfig):
-        logger.info(f"Initializing {DETECTOR_KEY} detector with multi-model support (YOLO single tensor, SSD)")
+        logger.info(f"Initializing {DETECTOR_KEY} detector with support for model_type ssd and yolo-generic")
         device_config = {}
         if detector_config.device is not None:
             device_config = {"device": detector_config.device}
@@ -67,19 +69,20 @@ class EdgeTpuTfl(DetectionApi):
         self.tensor_output_details = self.interpreter.get_output_details()
         self.model_width = detector_config.model.width # used for YOLO
         self.model_height = detector_config.model.height # used for YOLO
-
         self.min_score = 0.4 # used for SSD
         self.max_detections = 20 # used for SSD
 
-        # Determine model type based on number of outputs
-        if len(self.tensor_output_details) == 1:
-            # Single-tensor YOLO model
-            self.yolo_model = True
-            logger.info("Detected single-tensor YOLO model")
-        elif len(self.tensor_output_details) == 4:
-            # Legacy SSD model (4 outputs: boxes, class_ids, scores, count)
-            self.yolo_model = False
-            logger.info("Detected SSD model with 4 outputs")
+        model_type = detector_config.model.model_type
+        self.yolo_model = model_type == ModelTypeEnum.yologeneric # config YAML sets model_type: yolo-generic
+
+        if self.yolo_model:
+            logger.info(f"Using YOLO model type")
+        else:
+            if model_type not in [ModelTypeEnum.ssd, None]:
+                logger.warning(f"Unsupported model_type '{model_type}' for EdgeTPU detector, falling back to SSD")
+            logger.info(f"Using SSD model type")
+
+            # SSD model indices (4 outputs: boxes, class_ids, scores, count)
             for x in self.tensor_output_details:
                 if len(x["shape"]) == 3:
                     self.output_boxes_index = x["index"]
@@ -88,8 +91,6 @@ class EdgeTpuTfl(DetectionApi):
 
             self.output_class_ids_index = None
             self.output_class_scores_index = None
-        else:
-            raise ValueError(f"Unsupported model with {len(self.tensor_output_details)} outputs")
 
     def determine_indexes_for_non_yolo_models(self):
         """Legacy method for SSD models."""
@@ -102,21 +103,11 @@ class EdgeTpuTfl(DetectionApi):
                     else:
                         self.output_scores_index = index
 
-    def yolo_preprocess(self, input):
-        """some models need UINT8, others need INT8. This will make the necessary transformation"""
-        details = self.tensor_input_details[0]
-        input = input.astype('float') / 255
-        scale, zero_point = details['quantization']
-        input = (input / scale + zero_point).astype(details['dtype'])
-        return input
-
     def detect_raw(self, tensor_input):
         if self.yolo_model:
-            # Single-tensor YOLO model
-            # model output is a list with shape [84, 756], where the 84 numbers are:
-            # 0,1,2,3 are box coordinates in xywh format normalized to [0,1]
-            # 4: are 80 class probabilities corresponding to the COCO classes
-            tensor_input = self.yolo_preprocess(tensor_input)
+            # Single-tensor YOLO model with shape (84, N)
+            # first four numbers in each detection are xywh pixel coordinates (normalized to [0,1])
+            # followed by 80 COCO class probabilities (also [0,1])
             self.interpreter.set_tensor(self.tensor_input_details[0]["index"], tensor_input)
             self.interpreter.invoke()
 
@@ -133,7 +124,7 @@ class EdgeTpuTfl(DetectionApi):
                 outputs.append(x)
 
             return post_process_yolo(outputs, model_width, model_height)
-
+ 
         else:
             # Default SSD model
             self.interpreter.set_tensor(self.tensor_input_details[0]["index"], tensor_input)

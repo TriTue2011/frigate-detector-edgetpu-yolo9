@@ -8,7 +8,7 @@ Frigate, an open-source NVR system, supports various detector hardware, includin
 
 YOLOv9 can run almost entirely on the TPU of the Google Coral device. This detection method is both high-speed and low-energy, handling approximately 90 detections per second and using only a few Watts of power, while leaving the CPU available for other tasks. Another consideration is minimizing heat produced by the CPU, which can challenge my system's small fan.
 
-There are other YOLO models with incompatible software license terms (eg Ultralytics is licensed with the AGPL). This approach is meant to be used with the MIT-licensed YOLOv9 model, which IS compatible with Frigate (also MIT-licensed). For more information, see [this discussion in Frigate's issues](https://github.com/blakeblackshear/frigate/discussions/15630#discussioncomment-11639733).
+There are other YOLO models with incompatible software license terms (eg Ultralytics is licensed with the AGPL). This approach is meant to be used to start with the GPL-licensed YOLOv9 model, which IS compatible with Frigate (also MIT-licensed). For more information, see [this discussion in Frigate's issues](https://github.com/blakeblackshear/frigate/discussions/15630#discussioncomment-11639733).
 
 ## Features
 
@@ -40,7 +40,7 @@ Before you begin, ensure you have:
 
 ## Installation
 
-Follow these steps to integrate the `edgetpu_tfl_multi.py` plugin into your Frigate setup.
+Follow these steps to integrate the replacement `edgetpu_tfl.py` plugin into your Frigate setup.
 
 ### 1. Get a YOLO Model File for Edge TPU
 
@@ -99,16 +99,16 @@ Create a directory on your host system to store the plugin file. For example, yo
 ```bash
 sudo mkdir -p /opt/frigate-plugins
 cd /opt/frigate-plugins
-sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/edgetpu_tfl_multi.py
+sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/edgetpu_tfl.py
 # Or, if you cloned the repo:
-# sudo cp path/to/cloned/repo/edgetpu_tfl_multi.py /opt/frigate-plugins/
+# sudo cp path/to/cloned/repo/edgetpu_tfl.py /opt/frigate-plugins/
 ```
 
 ### 3. Update docker-compose.yml
 
 You need to add a volume mount to your Frigate service in your docker-compose.yml file. This mounts the plugin file into Frigate's detector plugins directory.
 
-Locate your Frigate service definition and add the following two lines under the volumes: section. Adjust /opt/frigate-plugins/edgetpu_tfl_multi.py if you stored the file elsewhere.
+Locate your Frigate service definition and add the following two lines under the volumes: section. Adjust /opt/frigate-plugins/edgetpu_tfl.py if you stored the file elsewhere.
 
 The second line to add will make your YOLO model accessible by the Frigate container by mounting its location on the host.
 
@@ -118,7 +118,7 @@ frigate:
   # ... other frigate configurations ...
   volumes:
     # ... existing volumes ...
-    - /opt/frigate-plugins/edgetpu_tfl_multi.py:/opt/frigate/frigate/detectors/plugins/edgetpu_tfl_multi.py:ro
+    - /opt/frigate-plugins/edgetpu_tfl.py:/opt/frigate/frigate/detectors/plugins/edgetpu_tfl.py:ro
     - /opt/frigate-plugins/yolov9t_full_integer_quant_edgetpu.tflite:/opt/frigate/models/yolov9t_full_integer_quant_edgetpu.tflite:ro
   # ... rest of frigate service ...
 ```
@@ -134,14 +134,15 @@ docker-compose up -d
 
 Now, you need to tell Frigate to use this new detector plugin and your YOLO model.
 
-In your config.yml, under the detectors: section, replace the existing detector called "edgetpu" with "edgetpu_multi" choice, and update the model path to point to your YOLO model file that you mounted in the previous step.
+In your config.yml, under the detectors: section, add the model_type parameter as shown below and update the model path to point to your YOLO model file that you mounted in the previous step.
 
 ```yaml
 detectors:
   coral:
-    type: edgetpu_multi
+    type: edgetpu
     # ... other detector settings ...
   model:
+      model_type: yolo-generic
       path: /opt/frigate-plugins/yolov9t_full_integer_quant_edgetpu.tflite # Update this to your model's path
       # Optionally, if your model has specific input dimensions (eg 192x192), uncomment these lines:
       # width: 192
@@ -160,7 +161,7 @@ Save the Frigate configuration and rexstart Frigate.
 
 ## How it Works
 
-The edgetpu_tfl_multi.py plugin acts as an intermediary. When Frigate requests a detection:
+This modified version of edgetpu_tfl.py replaces the standard version of the plugin and acts as an intermediary. When Frigate requests a detection:
 
 1. Frigate's standard Edge TPU handler passes the image frame to the plugin.
 2. The plugin loads your specified YOLO model.
