@@ -92,16 +92,18 @@ Compilation succeeded!
    * If you see something that indicates a significant number of operations will run on the CPU **re-run the export step again with new settings**. For example, reduce the value for the imgsz parameter to one of these: 320, 288, 256, 224, 192, 160. Or try again with a different .pt file for a different size of the model (instead of "small", try "tiny").
 * When you have a model that minimizes CPU operations, download it and copy it to your docker host, to somewhere like /opt/frigate-plugins/
 
-### 2. Download the Plugin File
+### 2. Download the Plugin File and Class Label File
 
-Create a directory on your host system to store the plugin file. For example, you might create `/opt/frigate-plugins/`.
+Create a directory on your host system to store the plugin file and the labels file. For example, you might create `/opt/frigate-plugins/`.
 
 ```bash
 sudo mkdir -p /opt/frigate-plugins
 cd /opt/frigate-plugins
 sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/edgetpu_tfl.py
+sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/labels.txt
 # Or, if you cloned the repo:
 # sudo cp path/to/cloned/repo/edgetpu_tfl.py /opt/frigate-plugins/
+# sudo cp path/to/cloned/repo/labels.txt /opt/frigate-plugins/
 ```
 
 ### 3. Update docker-compose.yml
@@ -110,7 +112,9 @@ You need to add a volume mount to your Frigate service in your docker-compose.ym
 
 Locate your Frigate service definition and add the following two lines under the volumes: section. Adjust /opt/frigate-plugins/edgetpu_tfl.py if you stored the file elsewhere.
 
-The second line to add will make your YOLO model accessible by the Frigate container by mounting its location on the host.
+The second line to add will make the COCO class labels accessible.
+
+The third line to add will make your YOLO model accessible.
 
 ```yaml
 # ... other services ...
@@ -119,6 +123,7 @@ frigate:
   volumes:
     # ... existing volumes ...
     - /opt/frigate-plugins/edgetpu_tfl.py:/opt/frigate/frigate/detectors/plugins/edgetpu_tfl.py:ro
+    - /opt/frigate-plugins/labels.txt:/opt/frigate/frigate/models/labels.txt:ro
     - /opt/frigate-plugins/yolov9t_full_integer_quant_edgetpu.tflite:/opt/frigate/models/yolov9t_full_integer_quant_edgetpu.tflite:ro
   # ... rest of frigate service ...
 ```
