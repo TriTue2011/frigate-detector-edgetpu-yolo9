@@ -100,10 +100,10 @@ Create a directory on your host system to store the plugin file and the labels f
 sudo mkdir -p /opt/frigate-plugins
 cd /opt/frigate-plugins
 sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/edgetpu_tfl.py
-sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/labels.txt
+sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/coco-labels.txt
 # Or, if you cloned the repo:
 # sudo cp path/to/cloned/repo/edgetpu_tfl.py /opt/frigate-plugins/
-# sudo cp path/to/cloned/repo/labels.txt /opt/frigate-plugins/
+# sudo cp path/to/cloned/repo/coco-labels.txt /opt/frigate-plugins/
 ```
 
 ### 3. Update docker-compose.yml
@@ -123,7 +123,7 @@ frigate:
   volumes:
     # ... existing volumes ...
     - /opt/frigate-plugins/edgetpu_tfl.py:/opt/frigate/frigate/detectors/plugins/edgetpu_tfl.py:ro
-    - /opt/frigate-plugins/labels.txt:/opt/frigate/frigate/models/labels.txt:ro
+    - /opt/frigate-plugins/coco-labels.txt:/opt/frigate/frigate/models/coco-labels.txt:ro
     - /opt/frigate-plugins/yolov9t_full_integer_quant_edgetpu.tflite:/opt/frigate/models/yolov9t_full_integer_quant_edgetpu.tflite:ro
   # ... rest of frigate service ...
 ```
@@ -148,6 +148,7 @@ detectors:
     # ... other detector settings ...
   model:
       model_type: yolo-generic
+      labelmap_path: /opt/frigate-plugins/coco-labels.txt
       path: /opt/frigate-plugins/yolov9t_full_integer_quant_edgetpu.tflite # Update this to your model's path
       # Optionally, if your model has specific input dimensions (eg 192x192), uncomment these lines:
       # width: 192
