@@ -44,7 +44,7 @@ Follow these steps to integrate the replacement `edgetpu_tfl.py` plugin into you
 
 ### 1. Get a YOLO Model File for Edge TPU
 
-* Use this Google Colab notebook to generate a MIT-licensed yolo v9 "tiny" model with resolution 192x192.
+* Use this Google Colab notebook to generate a MIT-licensed yolo v9 "tiny" model with resolution 256x256.
 
 [https://colab.research.google.com/drive/1n3sCrsVWJKu2H5KjgUyl3akIUYykSYaP?usp=sharing](https://colab.research.google.com/drive/1n3sCrsVWJKu2H5KjgUyl3akIUYykSYaP?usp=sharing)
 
@@ -86,7 +86,7 @@ Compilation child process completed within timeout period.
 Compilation succeeded! 
 
 
-✓ Edge TPU model created: yolov9-t-converted_192_int8_edgetpu.tflite
+✓ Edge TPU model created: yolov9-t-converted_256_int8_edgetpu.tflite
   Size: 3656.8 KB
 ```
    * If you see something that indicates a significant number of operations will run on the CPU **re-run the export step again with new settings**. For example, reduce the value for the imgsz parameter to one of these: 320, 288, 256, 224, 192, 160. Or try again with a different .pt file for a different size of the model (instead of "small", try "tiny").
@@ -119,7 +119,7 @@ frigate:
   volumes:
     # ... existing volumes ...
     - /opt/frigate-plugins/edgetpu_tfl.py:/opt/frigate/frigate/detectors/plugins/edgetpu_tfl.py:ro
-    - /opt/frigate-plugins/yolov9-t-converted_192_int8_edgetpu.tflite:/opt/frigate/models/yolov9-t-converted_192_int8_edgetpu.tflite:ro
+    - /opt/frigate-plugins/yolov9-t-converted_256_int8_edgetpu.tflite:/opt/frigate/models/yolov9-t-converted_256_int8_edgetpu.tflite:ro
   # ... rest of frigate service ...
 ```
 
@@ -144,10 +144,10 @@ detectors:
   model:
       model_type: yolo-generic
       labelmap_path: /labelmap/coco-80.txt
-      path: /opt/frigate-plugins/yolov9-t-converted_192_int8_edgetpu.tflite # Update this to your model's path
+      path: /opt/frigate-plugins/yolov9-t-converted_256_int8_edgetpu.tflite # Update this to your model's path
       # If your model has input dimensions other than 320x320 then add these lines:
-      width: 192
-      height: 192
+      width: 256
+      height: 256
 ```
 
 ### 5. Restart Frigate and Check Performance
