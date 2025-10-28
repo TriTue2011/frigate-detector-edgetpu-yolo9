@@ -52,42 +52,42 @@ Follow these steps to integrate the replacement `edgetpu_tfl.py` plugin into you
 * **IMPORTANT** Look at the output of the conversion step and see what it says about the operations being supported by the Edge TPU. Any steps that are not "Mapped to the Edge TPU" will be run on the CPU, which is slower+hotter than if they were to run on the TPU. If a large portion (25+% ?) of the operations do not get "Mapped to Edge TPU" then the model will probably run slowly, 30 ms or more per detection. Try a smaller or less complex or older model.  **LOOK FOR THIS INDICATION OF A PROBLEM**:
 ```
 Model successfully compiled but not all operations are supported by the Edge TPU. A percentage of the model will instead run on the CPU, which is slower. If possible, consider updating your model to use only operations supported by the Edge TPU. For details, visit g.co/coral/model-reqs.
-Number of operations that will run on Edge TPU: 719
+Number of operations that will run on Edge TPU: 720
 Number of operations that will run on CPU: 31
 
 Operator                       Count      Status
 
-SOFTMAX                        3          Mapped to Edge TPU
-STRIDED_SLICE                  16         Mapped to Edge TPU
-PAD                            2          Mapped to Edge TPU
-TRANSPOSE                      2          Operation is otherwise supported, but not mapped due to some unspecified limitation
-TRANSPOSE                      1          More than one subgraph is not supported
-TRANSPOSE                      14         Mapped to Edge TPU
-SPLIT                          6          Mapped to Edge TPU
-ADD                            48         Mapped to Edge TPU
-ADD                            6          More than one subgraph is not supported
-SUB                            6          More than one subgraph is not supported
-QUANTIZE                       5          Mapped to Edge TPU
-MAXIMUM                        3          Mapped to Edge TPU
 AVERAGE_POOL_2D                5          Mapped to Edge TPU
+PAD                            2          Mapped to Edge TPU
+SOFTMAX                        3          Mapped to Edge TPU
+RESHAPE                        9          Mapped to Edge TPU
+ADD                            6          More than one subgraph is not supported
+ADD                            48         Mapped to Edge TPU
+SPLIT                          6          Mapped to Edge TPU
+FULLY_CONNECTED                3          Mapped to Edge TPU
+MUL                            4          More than one subgraph is not supported
+MUL                            179        Mapped to Edge TPU
+CONV_2D                        203        Mapped to Edge TPU
+MAXIMUM                        3          Mapped to Edge TPU
+RESIZE_NEAREST_NEIGHBOR        2          Mapped to Edge TPU
 GATHER                         6          Operation not supported
 MINIMUM                        3          Mapped to Edge TPU
 CONCATENATION                  33         Mapped to Edge TPU
 CONCATENATION                  6          More than one subgraph is not supported
+STRIDED_SLICE                  16         Mapped to Edge TPU
+TRANSPOSE                      1          More than one subgraph is not supported
+TRANSPOSE                      2          Operation is otherwise supported, but not mapped due to some unspecified limitation
+TRANSPOSE                      14         Mapped to Edge TPU
 MAX_POOL_2D                    3          Mapped to Edge TPU
-RESHAPE                        9          Mapped to Edge TPU
-FULLY_CONNECTED                3          Mapped to Edge TPU
 LOGISTIC                       182        Mapped to Edge TPU
-CONV_2D                        203        Mapped to Edge TPU
-MUL                            179        Mapped to Edge TPU
-MUL                            4          More than one subgraph is not supported
-RESIZE_NEAREST_NEIGHBOR        2          Mapped to Edge TPU
+QUANTIZE                       6          Mapped to Edge TPU
+SUB                            6          More than one subgraph is not supported
 Compilation child process completed within timeout period.
 Compilation succeeded! 
 
 
-✓ Edge TPU model created: yolov9-t-converted_onnx2tf_quant_tflite/yolov9-t-converted_full_integer_quant_edgetpu.tflite
-  Size: 3588.8 KB
+✓ Edge TPU model created: yolov9-t-converted_192_int8_edgetpu.tflite
+  Size: 3656.8 KB
 ```
    * If you see something that indicates a significant number of operations will run on the CPU **re-run the export step again with new settings**. For example, reduce the value for the imgsz parameter to one of these: 320, 288, 256, 224, 192, 160. Or try again with a different .pt file for a different size of the model (instead of "small", try "tiny").
 * When you have a model that minimizes CPU operations, download it and copy it to your docker host, to somewhere like /opt/frigate-plugins/
@@ -124,7 +124,7 @@ frigate:
     # ... existing volumes ...
     - /opt/frigate-plugins/edgetpu_tfl.py:/opt/frigate/frigate/detectors/plugins/edgetpu_tfl.py:ro
     - /opt/frigate-plugins/coco-labels.txt:/opt/frigate/frigate/models/coco-labels.txt:ro
-    - /opt/frigate-plugins/yolov9t_full_integer_quant_edgetpu.tflite:/opt/frigate/models/yolov9t_full_integer_quant_edgetpu.tflite:ro
+    - /opt/frigate-plugins/yolov9-t-converted_192_int8_edgetpu.tflite:/opt/frigate/models/yolov9-t-converted_192_int8_edgetpu.tflite:ro
   # ... rest of frigate service ...
 ```
 
@@ -149,10 +149,10 @@ detectors:
   model:
       model_type: yolo-generic
       labelmap_path: /opt/frigate-plugins/coco-labels.txt
-      path: /opt/frigate-plugins/yolov9t_full_integer_quant_edgetpu.tflite # Update this to your model's path
-      # Optionally, if your model has specific input dimensions (eg 192x192), uncomment these lines:
-      # width: 192
-      # height: 192
+      path: /opt/frigate-plugins/yolov9-t-converted_192_int8_edgetpu.tflite # Update this to your model's path
+      # If your model has input dimensions other than 320x320 then add these lines:
+      width: 192
+      height: 192
 ```
 
 ### 5. Restart Frigate and Check Performance
