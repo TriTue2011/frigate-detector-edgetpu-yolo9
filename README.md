@@ -77,7 +77,7 @@ frigate:
   volumes:
     # ... existing volumes ...
     - /opt/frigate-plugins/edgetpu_tfl.py:/opt/frigate/frigate/detectors/plugins/edgetpu_tfl.py:ro
-    - /opt/frigate-plugins/labels-coco17.txt:/opt/frigate/frigate/detectors/plugins/labels-coco17.txt:ro
+    - /opt/frigate-plugins/labels-coco17.txt:/opt/frigate/models/labels-coco17.txt:ro
     - /opt/frigate-plugins/yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.tflite:/opt/frigate/models/yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.tflite:ro
   # ... rest of frigate service ...
 ```
@@ -102,8 +102,8 @@ detectors:
     # ... other detector settings ...
   model:
       model_type: yolo-generic
-      labelmap_path: /opt/frigate-plugins/labels-coco17.txt
-      path: /opt/frigate-plugins/yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.tflite # Update this to your model's path
+      labelmap_path: /opt/frigate/models/labels-coco17.txt
+      path: /opt/frigate/models/yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.tflite
       # Optionally specify the model dimensions (these are the same as Frigate's default 320x320)
       width: 320
       height: 320
