@@ -51,7 +51,7 @@ Create a directory on your host system to store the plugin file. For example, yo
 sudo mkdir -p /opt/frigate-plugins
 cd /opt/frigate-plugins
 # download weights
-sudo wget https://github.com/user-attachments/files/23448296/yolov9-s-relu6-best_320_int8_edgetpu.zip
+sudo wget https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.0/yolov9-s-relu6-best_320_int8_edgetpu.zip
 unzip yolov9-s-relu6-best_320_int8_edgetpu.zip
 # download plugin
 sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/edgetpu_tfl.py
