@@ -81,14 +81,33 @@ class EdgeTpuTfl(DetectionApi):
         self.yolo_model = model_type == ModelTypeEnum.yologeneric
 
         if self.yolo_model:
-            logger.info(f"Using YOLO preprocessing/postprocessing for {model_type}")
+            logger.info(f"Preparing YOLO postprocessing for {len(self.tensor_output_details)}-tensor output")
+            if len(self.tensor_output_details) == 2:
+                self._generate_anchors_and_strides()
+                self.min_logit_value = np.log(self.min_score / (1 - self.min_score))
+                self.reg_max = 16 # = dfl_channels // 4  # 64 // 4 = 16 # YOLO standard
+                self.project = np.arange(self.reg_max, dtype=np.float32)
+                # determine YOLO 2-tensor model indices (boxes, class_scores)
+                # the tensors have shapes (B, N, C) where N is the number of candidate detections (=2100 for 320x320)
+                # this should work properly UNLESS the number of classes is exactly 60 and classes is at index 1
+                self.output_boxes_index = None
+                self.output_classes_index = None
+                for i, x in enumerate(self.tensor_output_details):
+                    #logger.info(f"tensor[{i}] found with nominal index {x['index']} and shape {x['shape']}")
+                    # the nominal index seems to start at 1 instead of 0
+                    if len(x["shape"]) == 3 and x["shape"][2] == 64:
+                        if self.output_boxes_index is not None:
+                            self.output_classes_index = self.output_boxes_index
+                        self.output_boxes_index = i
+                    elif len(x["shape"]) == 3:
+                        self.output_classes_index = i
+                if self.output_boxes_index is None or self.output_classes_index is None:
+                    logger.warning(f"Unrecognized model output, unexpected tensor shapes.")
+                    self.output_classes_index = 0
+                    self.output_boxes_index = 1
+                    logger.warning(f"Assuming classes : {self.output_classes_index} and boxes : {self.output_boxes_index}")
+                #logger.info(f"Using output index for classes : {self.output_classes_index} and boxes : {self.output_boxes_index}")
 
-            logger.info(f"Expecting YOLO model output to have {len(self.tensor_output_details)} tensors")
-            self.strides = (8, 16, 32)
-            self._generate_anchors_and_strides()
-            self.min_logit_value = np.log(self.min_score / (1 - self.min_score))
-            self.reg_max = 16 # = dfl_channels // 4  # 64 // 4 = 16
-            self.project = np.arange(self.reg_max, dtype=np.float32)
         else:
             if model_type not in [ModelTypeEnum.ssd, None]:
                 logger.warning(f"Unsupported model_type '{model_type}' for EdgeTPU detector, falling back to SSD")
@@ -107,8 +126,9 @@ class EdgeTpuTfl(DetectionApi):
     def _generate_anchors_and_strides(self):
         all_anchors = []
         all_strides = []
+        strides = (8, 16, 32) # YOLO standard
 
-        for stride in self.strides:
+        for stride in strides:
             feat_h, feat_w = self.model_height // stride, self.model_width // stride
 
             grid_y, grid_x = np.meshgrid(
@@ -142,7 +162,7 @@ class EdgeTpuTfl(DetectionApi):
             if len(self.tensor_output_details) == 1:
                 # Single-tensor YOLO model
                 # model output is (1, NC+4, 2100) for 320x320 image size
-                # boxes as xywh (normalized to [0,1]) followed by 80 class probabilities (also [0,1])
+                # boxes as xywh (normalized to [0,1]) followed by NC class probabilities (also [0,1])
                 self.interpreter.set_tensor(self.tensor_input_details[0]["index"], tensor_input)
                 self.interpreter.invoke()
 
@@ -159,63 +179,60 @@ class EdgeTpuTfl(DetectionApi):
                 return post_process_yolo(outputs, self.model_width, self.model_height)
 
             if len(self.tensor_output_details) == 2:
-                # Two-tensor YOLO model
-                # model output tensor #0 is (1, NC, 2100) where NC is the count of classes, and the scores are logits
-                # model output tensor #1 is (1, 64, 2100) for image size 320x320, representing box dfl scores
-                # and the logit values could be clamped to +/-4 or similar
+                # Two-tensor YOLO model with (non-standard B(H*W)C output format)
+                # model output tensor for classes is (1, 2100, NC) where NC is the count of classes, and the scores are logits
+                # model output tensor for boxes is (1, 2100, 64) for image size 320x320, representing box dfl scores
+                # recommend clamping logit values between -4,+4 to avoid wasting precision on values with probabilty ~zero or ~100%
                 self.interpreter.set_tensor(self.tensor_input_details[0]["index"], tensor_input)
                 self.interpreter.invoke()
 
                 detections = np.zeros((self.max_detections, 6), np.float32) # empty results as default
 
                 # dequantize scores
-                scores_details = self.tensor_output_details[0]
+                scores_details = self.tensor_output_details[self.output_classes_index]
                 scores_scale, scores_zero_point = scores_details['quantization']
                 scores_output = self.interpreter.get_tensor(scores_details['index'])
                 scores_output = (scores_output.astype(np.float32) - scores_zero_point) * scores_scale
                 #logger.info(f"dequantized scores output {scores_output.shape}")
 
                 # 1. Get best class and confidence for each detection
-                class_ids = np.argmax(scores_output[0], axis=0)  # (2100,)
-                class_confs = np.max(scores_output[0], axis=0)  # (2100,)
+                class_ids = np.argmax(scores_output[0], axis=1)  # (2100,)
+                class_confs = np.max(scores_output[0], axis=1)  # (2100,)
 
                 # 1b. Check if no scores above threshold
                 mask = class_confs >= self.min_logit_value  # (2100,) this mask filters out low confidence candidates
-                count_above_threshold = np.sum(mask)
                 if not mask.any():
                     return detections # empty results
-                class_confs_filtered = class_confs[mask]  # (N,)
+                class_confs_filtered = class_confs[mask]  # (N,) where N is likely to be much less than 2100
                 class_ids_filtered = class_ids[mask]  # (N,)
 
                 # dequantize boxes
-                boxes_details = self.tensor_output_details[1]
+                boxes_details = self.tensor_output_details[self.output_boxes_index]
                 boxes_scale, boxes_zero_point = boxes_details['quantization']
-                boxes_output = (self.interpreter.get_tensor(boxes_details['index']))[:, :, mask] # remove candidates with probabilities < threshold
+                # remove candidates with probabilities < threshold
+                boxes_output = (self.interpreter.get_tensor(boxes_details['index']))[:, mask, :]  # (1, N, 64)
                 boxes_output = (boxes_output.astype(np.float32) - boxes_zero_point) * boxes_scale
                 #logger.info(f"dequantized boxes output {boxes_output.shape}")
-                bs, dfl_channels, count_filtered_proposals = boxes_output.shape
+                bs, count_filtered_proposals, dfl_channels = boxes_output.shape
 
                 # 2. Decode DFL to distances (ltrb)
-                #project = np.arange(reg_max, dtype=np.float32)
-                #dfl_distributions = filtered_boxes_output.reshape(bs, 4, reg_max, total_proposals)  # (1, 4, 16, 2100)
-                dfl_distributions = boxes_output.reshape(bs, 4, self.reg_max, count_filtered_proposals)  # (1, 4, 16, N)
+                dfl_distributions = boxes_output.reshape(bs, count_filtered_proposals, 4, self.reg_max)  # (1, N, 4, 16)
 
                 # Softmax over the 16 bins
-                dfl_exp = np.exp(dfl_distributions - np.max(dfl_distributions, axis=2, keepdims=True))
-                dfl_probs = dfl_exp / np.sum(dfl_exp, axis=2, keepdims=True)  # (1, 4, 16, N)
+                dfl_exp = np.exp(dfl_distributions - np.max(dfl_distributions, axis=3, keepdims=True))
+                dfl_probs = dfl_exp / np.sum(dfl_exp, axis=3, keepdims=True)  # (1, N, 4, 16)
 
-                # Weighted sum: (1, 4, 16, 2100) * (16,) -> (1, 4, 2100)
-                distances = np.einsum('bcrp,r->bcp', dfl_probs, self.project)
+                # Weighted sum: (1, N, 4, 16) * (16,) -> (1, N, 4)
+                distances = np.einsum('bpcr,r->bpc', dfl_probs, self.project)
 
                 # 3. Convert distances to bounding boxes (xyxy)
-                distances_permuted = distances.transpose(0, 2, 1)  # (1, N, 4)
-                distances_permuted = distances_permuted[0]  # (N, 4)
+                distances = distances[0]  # (N, 4)
 
                 # Calculate box corners in pixel coordinates
                 anchors_filtered = self.anchors[mask]
                 anchor_strides_filtered = self.anchor_strides[mask]
-                x1y1 = (anchors_filtered - distances_permuted[:, [0, 1]]) * anchor_strides_filtered  # (N, 2)
-                x2y2 = (anchors_filtered + distances_permuted[:, [2, 3]]) * anchor_strides_filtered  # (N, 2)
+                x1y1 = (anchors_filtered - distances[:, [0, 1]]) * anchor_strides_filtered  # (N, 2)
+                x2y2 = (anchors_filtered + distances[:, [2, 3]]) * anchor_strides_filtered  # (N, 2)
                 boxes_decoded = np.concatenate((x1y1, x2y2), axis=-1)  # (N, 4)
 
                 scores_decoded = 1 / (1 + np.exp(-class_confs_filtered))  # (N,) # sigmoid
@@ -224,7 +241,7 @@ class EdgeTpuTfl(DetectionApi):
                 indices = cv2.dnn.NMSBoxes(
                     bboxes=boxes_decoded,
                     scores=scores_decoded, # would prefer to use logits and do this transformation after NMS, but ...
-                    score_threshold=self.min_score, # must be > 0 . That means can't use logit scores unless >50% probability
+                    score_threshold=self.min_score, # cv2 asserts the min_score must be > 0 which means >50% probability
                     nms_threshold=0.4,
                 )
 
