@@ -23,12 +23,12 @@ The plugin code does some post-processing on the CPU, so this approach will use 
 
 ## Example System Performance
 
+* CPU is Intel 3rd Generation i7, 8GB RAM, circa 2012 (the built in GPU is not supported by OpenVINO)
 * Google Coral mini-PCIe card
-* average 25 detections per second
-* zero skipped frames
 * 13ms detection speed
-* Detector CPU usage varies between 10% and 15%
-* CPU is Intel 3rd Generation i7, 8GB RAM, circa 2012
+* with an average 25 detections per second
+* zero skipped frames
+* Detector CPU usage varies between 10% and 15% 
 
 
 ## Prerequisites
@@ -115,7 +115,7 @@ Save the Frigate configuration and rexstart Frigate.
 * Are there any skipped frames?
 * How many detection errors do you observe? Look for both false positives and false negatives.
 
-## How it Works
+## How it Works With Frigate
 
 This modified version of edgetpu_tfl.py replaces the standard version of the plugin and acts as an intermediary. When Frigate requests a detection:
 
@@ -125,6 +125,17 @@ This modified version of edgetpu_tfl.py replaces the standard version of the plu
 4. It then post-processes the raw output from the YOLO model to transform it into the format expected by Frigate (e.g., converting bounding box coordinates, handling confidence scores).
 5. The processed detections are returned to Frigate.
 
+## Lessons Learned Getting YOLO v9 to Run on Google Coral
+
+It is possible to convert the pre-trained weights for YOLO from PyTorch format to ONNX and then to TFLite and then compile for EdgeTPU, which is waht runs on Google Coral. However, simple conversions of the models available for download perform poorly on the Coral, because it uses operations that are not appropriate for the 8-bit limitation of Google Coral. This leads to a total loss of information and zero detections. The following changes to the YOLO model structure enable the information to be preserved accurately through the sequence of operations run on Google Coral. The goal is to let the Coral perform all the convolution operations, and then send the data for post-processing on the CPU.
+
+* **ReLU6 activation** should be used instead of SiLU activation. It is smaller and faster than SiLU, and quantizes better.
+* **Send Logit scores** to the CPU for post-processing to transform them into probabilities. The Coral cannot do the sigmoid() transformation.
+* **Decode boxes and run Non-Maximum Supression (NMS) on the CPU** because the Coral cannot run these operations efficiently.
+* **Each tensor has only one quantization scale** which means there needs to be separate tensors for box coordinates and the class scores, which have different ranges of values.
+
+With those changes and post-processing steps, the Google Coral can run the convolutiuon operations for a YOLO v9 "s" model with size 320x320 pixels. The resulting model uses 7.2MB out of the 8MB of cache space available on the Coral device.
+
 ## Contributing
 
 This project is open-source. If you find issues or have improvements, feel free to open an issue or submit a pull request.
@@ -133,6 +144,7 @@ This project is open-source. If you find issues or have improvements, feel free 
 
 * [https://github.com/blakeblackshear/frigate](https://github.com/blakeblackshear/frigate)
 * [https://github.com/WongKinYiu/yolov9/tree/main](https://github.com/WongKinYiu/yolov9/tree/main)
+* [https://engineering.cloudflight.io/quantized-yolo-for-edge-solutions](https://engineering.cloudflight.io/quantized-yolo-for-edge-solutions)
 
 ## License
 This project is licensed under the MIT License. See the LICENSE file for details.
