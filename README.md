@@ -14,7 +14,7 @@ There are other YOLO models with incompatible software license terms (eg Ultraly
 
 *   **Improved Accuracy:** Fewer false positive detections than the default SSD MobileDet object detection model.
 *   **YOLO Compatibility:** Processes output from YOLO models exported for Edge TPU.
-*   **Google Coral Edge TPU Support:** Optimized for efficient inference on Coral devices. ~10ms inference time (vs 7ms for the MobileDet model)
+*   **Google Coral Edge TPU Support:** Optimized for efficient inference on Coral devices. ~13ms inference time (vs 7ms for the MobileDet model)
 *   **Simple Integration:** Adds as a Frigate plugin via a Docker volume mount, no core Frigate code changes needed.
 
 ## Caveat
@@ -25,8 +25,7 @@ The plugin code does some post-processing on the CPU, so this approach will use 
 
 * CPU is Intel 3rd Generation i7, 8GB RAM, circa 2012 (the built in GPU is not supported by OpenVINO)
 * Google Coral mini-PCIe card
-* 13ms detection speed
-* with an average 25 detections per second
+* 13ms detection speed when running an average 25 detections per second
 * zero skipped frames
 * Detector CPU usage varies between 10% and 15% 
 
@@ -127,7 +126,7 @@ This modified version of edgetpu_tfl.py replaces the standard version of the plu
 
 ## Lessons Learned Getting YOLO v9 to Run on Google Coral
 
-It is possible to convert the pre-trained weights for YOLO from PyTorch format to ONNX and then to TFLite and then compile for EdgeTPU, which is waht runs on Google Coral. However, simple conversions of the models available for download perform poorly on the Coral, because it uses operations that are not appropriate for the 8-bit limitation of Google Coral. This leads to a total loss of information and zero detections. The following changes to the YOLO model structure enable the information to be preserved accurately through the sequence of operations run on Google Coral. The goal is to let the Coral perform all the convolution operations, and then send the data for post-processing on the CPU.
+It is possible to convert the pre-trained weights for YOLO from PyTorch format to ONNX and then to TFLite and then compile for EdgeTPU, which runs on Google Coral. However, simple conversions of the models available for download perform poorly on the Coral, because it uses operations that are not appropriate for the 8-bit limitation of Google Coral. This leads to a total loss of information and zero detections. The following changes to the YOLO model structure enable the information to be preserved accurately through the sequence of operations run on Google Coral. The goal is to let the Coral perform all the convolution operations, and then send the data for post-processing on the CPU.
 
 * **ReLU6 activation** should be used instead of SiLU activation. It is smaller and faster than SiLU, and quantizes better.
 * **Send Logit scores** to the CPU for post-processing to transform them into probabilities. The Coral cannot do the sigmoid() transformation.
