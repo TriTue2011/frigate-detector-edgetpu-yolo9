@@ -42,27 +42,23 @@ Before you begin, ensure you have:
 
 Follow these steps to integrate the replacement `edgetpu_tfl.py` plugin into your Frigate setup.
 
-### 1. Get a YOLO Model File for Edge TPU
-
-* Download the model weights here: [https://github.com/user-attachments/files/23448296/yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.zip](https://github.com/user-attachments/files/23448296/yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.zip)
-
-* Unzip the file and copy it to your docker host, to somewhere like /opt/frigate-plugins/
-
-### 2. Download the Plugin File and Class Label File
+### 1. Download the Model Weights, Plugin File and Class Label File
 
 Create a directory on your host system to store the plugin file. For example, you might create `/opt/frigate-plugins/`.
 
 ```bash
 sudo mkdir -p /opt/frigate-plugins
 cd /opt/frigate-plugins
+# download weights
+sudo wget https://github.com/user-attachments/files/23448296/yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.zip
+unzip yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.zip
+# download plugin
 sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/edgetpu_tfl.py
+# download labels
 sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/labels-coco17.txt
-# Or, if you cloned the repo:
-# sudo cp path/to/cloned/repo/edgetpu_tfl.py /opt/frigate-plugins/
-# sudo cp path/to/cloned/repo/labels-coco17.txt /opt/frigate-plugins/
 ```
 
-### 3. Update docker-compose.yml
+### 2. Update docker-compose.yml
 
 You need to add a volume mount to your Frigate service in your docker-compose.yml file. This mounts the plugin file into Frigate's detector plugins directory.
 
@@ -89,7 +85,7 @@ docker-compose down
 docker-compose up -d
 ```
 
-### 4. Configure Frigate's config.yml
+### 3. Configure Frigate's config.yml
 
 Now, you need to tell Frigate to use this new detector plugin and your YOLO model.
 
@@ -109,7 +105,7 @@ detectors:
       height: 320
 ```
 
-### 5. Restart Frigate and Check Performance
+### 4. Restart Frigate and Check Performance
 
 Save the Frigate configuration and rexstart Frigate.
 
