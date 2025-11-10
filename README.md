@@ -14,7 +14,7 @@ There are other YOLO models with incompatible software license terms (eg Ultraly
 
 *   **Improved Accuracy:** Fewer false positive detections than the default SSD MobileDet object detection model.
 *   **YOLO Compatibility:** Processes output from YOLO models exported for Edge TPU.
-*   **Google Coral Edge TPU Support:** Optimized for efficient inference on Coral devices. ~13ms inference time (vs 7ms for the MobileDet model)
+*   **Google Coral Edge TPU Support:** Optimized for efficient inference on Coral devices. 11ms inference time (vs 7ms for the MobileDet model)
 *   **Simple Integration:** Adds as a Frigate plugin via a Docker volume mount, no core Frigate code changes needed.
 
 ## Caveat
@@ -25,9 +25,9 @@ The plugin code does some post-processing on the CPU, so this approach will use 
 
 * CPU is Intel 3rd Generation i7, 8GB RAM, circa 2012 (the built in GPU is not supported by OpenVINO)
 * Google Coral mini-PCIe card
-* 13ms detection speed when running an average 25 detections per second
+* 11ms detection speed when running a load test averaging 40 detections per second
 * zero skipped frames
-* Detector CPU usage varies between 10% and 15% 
+* Detector CPU usage varies between 15% and 20%
 
 
 ## Prerequisites
@@ -49,8 +49,8 @@ Create a directory on your host system to store the plugin file. For example, yo
 sudo mkdir -p /opt/frigate-plugins
 cd /opt/frigate-plugins
 # download weights
-sudo wget https://github.com/user-attachments/files/23448296/yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.zip
-unzip yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.zip
+sudo wget https://github.com/user-attachments/files/23448296/yolov9-s-relu6-best_320_int8_edgetpu.zip
+unzip yolov9-s-relu6-best_320_int8_edgetpu.zip
 # download plugin
 sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/edgetpu_tfl.py
 # download labels
@@ -73,7 +73,7 @@ frigate:
     # ... existing volumes ...
     - /opt/frigate-plugins/edgetpu_tfl.py:/opt/frigate/frigate/detectors/plugins/edgetpu_tfl.py:ro
     - /opt/frigate-plugins/labels-coco17.txt:/opt/frigate/models/labels-coco17.txt:ro
-    - /opt/frigate-plugins/yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.tflite:/opt/frigate/models/yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.tflite:ro
+    - /opt/frigate-plugins/yolov9-s-relu6-best_320_int8_edgetpu.tflite:/opt/frigate/models/yolov9-s-relu6-best_320_int8_edgetpu.tflite:ro
   # ... rest of frigate service ...
 ```
 
@@ -98,7 +98,7 @@ detectors:
   model:
       model_type: yolo-generic
       labelmap_path: /opt/frigate/models/labels-coco17.txt
-      path: /opt/frigate/models/yolov9-s-relu6-10epoch-17class_320_int8_edgetpu.tflite
+      path: /opt/frigate/models/yolov9-s-relu6-best_320_int8_edgetpu.tflite
       # Optionally specify the model dimensions (these are the same as Frigate's default 320x320)
       width: 320
       height: 320
@@ -132,8 +132,9 @@ It is possible to convert the pre-trained weights for YOLO from PyTorch format t
 * **Send Logit scores** to the CPU for post-processing to transform them into probabilities. The Coral cannot do the sigmoid() transformation.
 * **Decode boxes and run Non-Maximum Supression (NMS) on the CPU** because the Coral cannot run these operations efficiently.
 * **Each tensor has only one quantization scale** which means there needs to be separate tensors for box coordinates and the class scores, which have different ranges of values.
+* **Data size limits are tricky.** For example, using a different order of dimensions (BNC) in the boxes tensor enables it to run entirely on the TPU, but with a different order (BCN) some operations must either run on the CPU or be done repeatedly on smaller chunks. 
 
-With those changes and post-processing steps, the Google Coral can run the convolutiuon operations for a YOLO v9 "s" model with size 320x320 pixels. The resulting model uses 7.2MB out of the 8MB of cache space available on the Coral device.
+Applying those lessons lets the Google Coral run all the convolutiuon operations on its TPU for a YOLO v9 "s" model with size 320x320 pixels. The resulting model uses 7.2MB out of the 8MB of cache space available on the Coral device.
 
 ## Contributing
 
