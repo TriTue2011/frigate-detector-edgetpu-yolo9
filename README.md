@@ -2,6 +2,8 @@
 
 This repository provides a custom detector plugin for Frigate, specifically designed to enable the use of **YOLOv9** models with Google Coral Edge TPUs. This plugin handles the necessary post-processing for YOLO model outputs, making them compatible with Frigate's detection pipeline without modifying Frigate's core source code.
 
+![abbeyroad-detections](https://github.com/user-attachments/assets/a4dfbe6f-2ed3-43f1-9697-6ea119e463fe)
+
 ## Why YOLOv9 and this Plugin?
 
 Frigate, an open-source NVR system, supports various detector hardware, including the Google Coral Edge TPU. While the default SSD MobileDet model works well in many case, in some cases YOLOv9 models can often offer improved detection accuracy and reduced false positives.
