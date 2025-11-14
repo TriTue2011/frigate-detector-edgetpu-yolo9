@@ -82,30 +82,32 @@ class EdgeTpuTfl(DetectionApi):
 
         if self.yolo_model:
             logger.info(f"Preparing YOLO postprocessing for {len(self.tensor_output_details)}-tensor output")
-            if len(self.tensor_output_details) == 2:
+            if len(self.tensor_output_details) in [2,3]:
                 self._generate_anchors_and_strides()
                 self.min_logit_value = np.log(self.min_score / (1 - self.min_score))
                 self.reg_max = 16 # = dfl_channels // 4  # 64 // 4 = 16 # YOLO standard
                 self.project = np.arange(self.reg_max, dtype=np.float32)
-                # determine YOLO 2-tensor model indices (boxes, class_scores)
+                # determine YOLO tensor indices for boxes and class_scores based on shape
                 # the tensors have shapes (B, N, C) where N is the number of candidate detections (=2100 for 320x320)
-                # this should work properly UNLESS the number of classes is exactly 60 and classes is at index 1
+                # this should work properly EXCEPT if the number of classes is exactly 64, then it might guess wrong
                 self.output_boxes_index = None
                 self.output_classes_index = None
+                self.output_max_scores_index = None
                 for i, x in enumerate(self.tensor_output_details):
                     #logger.info(f"tensor[{i}] found with nominal index {x['index']} and shape {x['shape']}")
-                    # the nominal index seems to start at 1 instead of 0
+                    # the nominal index seems to start at 1 instead of 0, so we don't use it
                     if len(x["shape"]) == 3 and x["shape"][2] == 64:
-                        if self.output_boxes_index is not None:
-                            self.output_classes_index = self.output_boxes_index
                         self.output_boxes_index = i
+                    elif len(x["shape"]) == 3 and x["shape"][2] == 1:
+                        self.output_max_scores_index = i
+                        logger.info(f"Found class max scores pre-calculated by TPU for use in post-processing")
                     elif len(x["shape"]) == 3:
                         self.output_classes_index = i
                 if self.output_boxes_index is None or self.output_classes_index is None:
                     logger.warning(f"Unrecognized model output, unexpected tensor shapes.")
-                    self.output_classes_index = 0
-                    self.output_boxes_index = 1
-                    logger.warning(f"Assuming classes : {self.output_classes_index} and boxes : {self.output_boxes_index}")
+                    self.output_classes_index = 0 # guess...
+                    self.output_boxes_index = 1 # might be correct
+                    logger.warning(f"Assuming classes tensor index is {self.output_classes_index} and boxes is {self.output_boxes_index}")
                 #logger.info(f"Using output index for classes : {self.output_classes_index} and boxes : {self.output_boxes_index}")
 
         else:
@@ -126,7 +128,7 @@ class EdgeTpuTfl(DetectionApi):
     def _generate_anchors_and_strides(self):
         all_anchors = []
         all_strides = []
-        strides = (8, 16, 32) # YOLO standard
+        strides = (8, 16, 32) # YOLO standard for small, medium, large detection heads
 
         for stride in strides:
             feat_h, feat_w = self.model_height // stride, self.model_width // stride
@@ -178,89 +180,127 @@ class EdgeTpuTfl(DetectionApi):
 
                 return post_process_yolo(outputs, self.model_width, self.model_height)
 
-            if len(self.tensor_output_details) == 2:
-                # Two-tensor YOLO model with (non-standard B(H*W)C output format)
-                # model output tensor for classes is (1, 2100, NC) where NC is the count of classes, and the scores are logits
-                # model output tensor for boxes is (1, 2100, 64) for image size 320x320, representing box dfl scores
-                # recommend clamping logit values between -4,+4 to avoid wasting precision on values with probabilty ~zero or ~100%
+            if len(self.tensor_output_details) in [2,3]:
+                # Multi-tensor YOLO model with (non-standard B(H*W)C output format).
+                # (the comments indicate the shape of tensors, using "2100" as the anchor count
+                # corresponding to an image size of 320x320, "NC" as number of classes,
+                # "N" as the post-filtered count)
+                # TENSOR A) class scores (1, 2100, NC) where NC is the count of classes, and the score values are logits
+                # TENSOR B) max class scores (1, 2100, 1) is an optional tensor to accelerate post-processing by CPU
+                #    For my system this reduces inference time from 12ms to 10ms
+                # TENSOR C) box coordinates (1, 2100, 64) encoded as dfl scores
+                # both (A) and (B) should be clamped to the range [-4,+4] to preserve precision because
+                # we don't need details when probability <2% or >98% and NMS requires the min_score
+                # parameter to be >= 0 (I don't know why this requirement is necessary for NMS).
                 self.interpreter.set_tensor(self.tensor_input_details[0]["index"], tensor_input)
                 self.interpreter.invoke()
 
                 detections = np.zeros((self.max_detections, 6), np.float32) # empty results as default
 
-                # dequantize scores
-                scores_details = self.tensor_output_details[self.output_classes_index]
-                scores_scale, scores_zero_point = scores_details['quantization']
-                scores_output = self.interpreter.get_tensor(scores_details['index'])
-                scores_output = (scores_output.astype(np.float32) - scores_zero_point) * scores_scale
-                #logger.info(f"dequantized scores output {scores_output.shape}")
+                # get the quantization scaling info to translate thresholds into quantized amounts
+                # but don't dequantize scores data yet, wait until the low-confidence candidates
+                # are filtered out from the overall result set.
+                # this method works with raw quantized numbers when possible, which relies on the
+                # value of the scale factor to be >0. This speeds up max and argmax operations.
+                scores_output_quantized = None # defer this until later if possible
+                if self.output_max_scores_index is not None:
+                    # accelerated path
+                    # the maximum logit score across all classes has already been calculated by the TPU for each candidate
+                    # so we can use that to create the mask and filter the data immediately. saves 1 or 2 milliseconds
+                    max_scores_details = self.tensor_output_details[self.output_max_scores_index]
+                    max_scores_scale, max_scores_zero_point = max_scores_details['quantization']
+                    min_max_score_quantized = int((self.min_logit_value / max_scores_scale) + max_scores_zero_point) # constant
+                    max_scores_quantized = (self.interpreter.get_tensor(max_scores_details['index'])[0]).squeeze(-1) # (2100, 1)
+                    mask = max_scores_quantized >= min_max_score_quantized # (2100,) this mask filters out low confidence candidates
+                    # add 4.0 to (clamped) logit values to get values to be non-negative, which cv2 requires for the input to NMS (why?)
+                    # it allows us to reduce the number of sigmoid operations by doing them after NMS
+                    # need to convert into float before sending to NMS
+                    max_scores_filtered_plus4 = ((max_scores_quantized[mask] - max_scores_zero_point) * max_scores_scale) + 4.0  # (N,1)
+                else:
+                    # regular path. need to calculate the max value of class scores for each candidate.
+                    scores_details = self.tensor_output_details[self.output_classes_index]
+                    scores_scale, scores_zero_point = scores_details['quantization']
+                    min_score_quantized = int((self.min_logit_value / scores_scale) + scores_zero_point) # constant
+                    scores_output_quantized = self.interpreter.get_tensor(scores_details['index'])[0] # (2100, NC)
+                    # Get max confidence for each detection. this max() operation over a large tensor takes approx 2ms for 320x320
+                    max_scores_quantized = np.max(scores_output_quantized, axis=1)  # (2100,)
+                    mask = max_scores_quantized >= min_score_quantized  # (2100,) this mask filters out low confidence candidates
+                    max_scores_filtered_plus4 = ((max_scores_quantized[mask] - scores_zero_point) * scores_scale) + 4.0  # (N,1)
 
-                # 1. Get best class and confidence for each detection
-                class_ids = np.argmax(scores_output[0], axis=1)  # (2100,)
-                class_confs = np.max(scores_output[0], axis=1)  # (2100,)
-
-                # 1b. Check if no scores above threshold
-                mask = class_confs >= self.min_logit_value  # (2100,) this mask filters out low confidence candidates
                 if not mask.any():
                     return detections # empty results
-                class_confs_filtered = class_confs[mask]  # (N,) where N is likely to be much less than 2100
-                class_ids_filtered = class_ids[mask]  # (N,)
 
-                # dequantize boxes
+                # dequantize boxes. NMS needs them to be in float format
                 boxes_details = self.tensor_output_details[self.output_boxes_index]
                 boxes_scale, boxes_zero_point = boxes_details['quantization']
                 # remove candidates with probabilities < threshold
-                boxes_output = (self.interpreter.get_tensor(boxes_details['index']))[:, mask, :]  # (1, N, 64)
-                boxes_output = (boxes_output.astype(np.float32) - boxes_zero_point) * boxes_scale
+                boxes_output_quantized = self.interpreter.get_tensor(boxes_details['index'])  # (1, N, 64)
+                #logger.info(f"boxes_output_quantized shape is {boxes_output_quantized.shape}")
+                boxes_output_quantized_filtered = (self.interpreter.get_tensor(boxes_details['index'])[0])[mask]  # (N, 64)
+                #logger.info(f"boxes_output post mask shape : {boxes_output.shape}")
+                boxes_output_filtered = (boxes_output_quantized_filtered.astype(np.float32) - boxes_zero_point) * boxes_scale
                 #logger.info(f"dequantized boxes output {boxes_output.shape}")
-                bs, count_filtered_proposals, dfl_channels = boxes_output.shape
+                count_filtered_proposals, dfl_channels = boxes_output_filtered.shape # (N, 16)
 
                 # 2. Decode DFL to distances (ltrb)
-                dfl_distributions = boxes_output.reshape(bs, count_filtered_proposals, 4, self.reg_max)  # (1, N, 4, 16)
+                dfl_distributions = boxes_output_filtered.reshape(count_filtered_proposals, 4, self.reg_max)  # (N, 4, 16)
 
                 # Softmax over the 16 bins
-                dfl_exp = np.exp(dfl_distributions - np.max(dfl_distributions, axis=3, keepdims=True))
-                dfl_probs = dfl_exp / np.sum(dfl_exp, axis=3, keepdims=True)  # (1, N, 4, 16)
+                dfl_exp = np.exp(dfl_distributions - np.max(dfl_distributions, axis=2, keepdims=True))
+                dfl_probs = dfl_exp / np.sum(dfl_exp, axis=2, keepdims=True)  # (N, 4, 16)
 
-                # Weighted sum: (1, N, 4, 16) * (16,) -> (1, N, 4)
-                distances = np.einsum('bpcr,r->bpc', dfl_probs, self.project)
-
-                # 3. Convert distances to bounding boxes (xyxy)
-                distances = distances[0]  # (N, 4)
+                # Weighted sum: (N, 4, 16) * (16,) -> (N, 4)
+                distances = np.einsum('pcr,r->pc', dfl_probs, self.project)
 
                 # Calculate box corners in pixel coordinates
                 anchors_filtered = self.anchors[mask]
                 anchor_strides_filtered = self.anchor_strides[mask]
                 x1y1 = (anchors_filtered - distances[:, [0, 1]]) * anchor_strides_filtered  # (N, 2)
                 x2y2 = (anchors_filtered + distances[:, [2, 3]]) * anchor_strides_filtered  # (N, 2)
-                boxes_decoded = np.concatenate((x1y1, x2y2), axis=-1)  # (N, 4)
-
-                scores_decoded = 1 / (1 + np.exp(-class_confs_filtered))  # (N,) # sigmoid
+                boxes_filtered_decoded = np.concatenate((x1y1, x2y2), axis=-1)  # (N, 4)
 
                 # 9. Apply NMS
                 indices = cv2.dnn.NMSBoxes(
-                    bboxes=boxes_decoded,
-                    scores=scores_decoded, # would prefer to use logits and do this transformation after NMS, but ...
-                    score_threshold=self.min_score, # cv2 asserts the min_score must be > 0 which means >50% probability
-                    nms_threshold=0.4,
+                    bboxes=boxes_filtered_decoded,
+                    scores=max_scores_filtered_plus4, # logit scores shifted to be non-negative to allow min_score <50% or logit<0
+                    score_threshold=(self.min_logit_value + 4.0), # cv2 asserts the min_score must be > 0 which means >50% probability
+                    nms_threshold=0.4
                 )
-
                 #logger.info(f"NMS kept {indices.shape} boxes out of {np.sum(mask)}")
 
-                for i, (bbox, confidence, class_id) in enumerate(
-                    zip(boxes_decoded[indices], scores_decoded[indices], class_ids_filtered[indices])
+                # get the filtered, post-NMS list of class ids
+                if scores_output_quantized is None:
+                    # leave the scores as quantized values because we will use them to get the class id (not the score itself)
+                    scores_details = self.tensor_output_details[self.output_classes_index]
+                    scores_output_quantized = self.interpreter.get_tensor(scores_details['index'])[0] # (2100, NC)
+                orig_row = np.where(mask)[0]
+                if len(indices) > 0:
+                    nms_indices = np.array(indices, dtype=np.int32).ravel()  # or .flatten()
+                else:
+                    nms_indices = np.array([], dtype=np.int32)
+                kept_logits_quantized = scores_output_quantized[orig_row[nms_indices]]
+                class_ids_post_nms = np.argmax(kept_logits_quantized, axis=1)
+
+                # package the results for Frigate
+                for i, (bbox, logit_plus4, class_id) in enumerate(
+                    zip(boxes_filtered_decoded[indices], max_scores_filtered_plus4[indices], class_ids_post_nms)
                 ):
                     if i == self.max_detections:
                         break
 
                     detections[i] = [
                         class_id,
-                        confidence,
+                        1 / (1 + np.exp(-1 * (logit_plus4 - 4.0))),  # sigmoid
                         bbox[1] / self.model_height,
                         bbox[0] / self.model_width,
                         bbox[3] / self.model_height,
                         bbox[2] / self.model_width,
                     ]
+                if False:
+                    # debug statement to indicate if detections are happening at small/med/large head
+                    top_i = np.argmax(max_scores) # highest probability detection overall
+                    head = "small" if top_i < 1600 else "med" if top_i < 2000 else "large" # these are for 320x320 images
+                    logger.info(f"Top detect # {top_i} ({head}) class {class_ids_post_nms[0]} with logit score {(max_scores_filtered_plus4[indices][0] - 4.0):.3f}")
                 return detections
 
         else:
