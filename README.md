@@ -33,11 +33,11 @@ Regarding CPU usage, all YOLO models (pre YOLO v10) use the CPU during post-proc
 
 There are currently two versions of YOLO v9 for use with this plugin:
 
-* [YOLO v9 "small" 320x320 input size](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-maxtpu_320_int8_edgetpu.tflite)
+* [YOLO v9 "small" 320x320 input size](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_320_int8_edgetpu.tflite)
 
 This version runs in 10ms on the reference system which is quite old. Faster performance is possible when running on a faster CPU. With a detection speed of 10ms, it should allow one Coral device to perform detections on 100 images per second. Note that there can be multiple detections run for a single frame from the video feed, if there are multiple separate areas where motion gets detected. All 334 operations that are part of the model run on the Google Coral TPU.
 
-* [YOLO v9 "small" 512x512 input size](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-maxtpu_512_int8_edgetpu.tflite)
+* [YOLO v9 "small" 512x512 input size](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_512_int8_edgetpu.tflite)
 
 This model runs in about 21ms. It can detect smaller objects relative to the full frame size. It might be preferable in situations where it is important to detect small or faraway objects. All but 2 of the 334 operations in the model run on the Google Coral TPU, and the 2 that do not run at the end of the model's sequence which means the slowdown is minimal. The main reason for the slower operation is the larger tensor sizes. The operating temperature of this model is around 60 degrees C when running a 40 fps load test, versus 50 degrees for the 320x320 model above.
 
