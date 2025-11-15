@@ -111,13 +111,13 @@ detectors:
   coral:
     type: edgetpu
     # ... other detector settings ...
-  model:
-      model_type: yolo-generic
-      labelmap_path: /opt/frigate/models/labels-coco17.txt
-      path: /opt/frigate/models/yolov9-s-relu6-tpumax_320_int8_edgetpu.tflite
-      # Optionally specify the model dimensions (these are the same as Frigate's default 320x320)
-      width: 320
-      height: 320
+model:
+  model_type: yolo-generic
+  labelmap_path: /opt/frigate/models/labels-coco17.txt
+  path: /opt/frigate/models/yolov9-s-relu6-tpumax_320_int8_edgetpu.tflite
+  # Optionally specify the model dimensions (these are the same as Frigate's default 320x320)
+  width: 320
+  height: 320
 ```
 
 ### 4. Restart Frigate and Check Performance
