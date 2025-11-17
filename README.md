@@ -77,7 +77,7 @@ sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/
 
 You need to add a volume mount to your Frigate service in your docker-compose.yml file. This mounts the plugin file into Frigate's detector plugins directory.
 
-Locate your Frigate service definition and add the following two lines under the volumes: section. Adjust /opt/frigate-plugins/edgetpu_tfl.py if you stored the file elsewhere.
+Locate your Frigate service definition and add the following two lines in the volumes: section. Adjust /opt/frigate-plugins/edgetpu_tfl.py if you stored the file elsewhere.
 
 The second line to add will make your YOLO model accessible.
 
@@ -104,13 +104,9 @@ docker-compose up -d
 
 Now, you need to tell Frigate to use this new detector plugin and your YOLO model.
 
-In your config.yml, under the detectors: section, add the model_type parameter as shown below and update the model path to point to your YOLO model file that you mounted in the previous step.
+In your config.yml, in the model: section, add the model_type parameter as shown below and update the model path to point to your YOLO model file that you mounted in the previous step.
 
 ```yaml
-detectors:
-  coral:
-    type: edgetpu
-    # ... other detector settings ...
 model:
   model_type: yolo-generic
   labelmap_path: /opt/frigate/models/labels-coco17.txt
@@ -118,6 +114,10 @@ model:
   # Optionally specify the model dimensions (these are the same as Frigate's default 320x320)
   width: 320
   height: 320
+detectors:
+  coral:
+    type: edgetpu
+    # ... other detector settings ...
 ```
 
 ### 4. Restart Frigate and Check Performance
