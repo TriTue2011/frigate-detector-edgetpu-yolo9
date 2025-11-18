@@ -6,9 +6,9 @@ This repository provides a custom detector plugin for [Frigate](https://github.c
 
 ## Why YOLOv9 and this Plugin?
 
-Frigate is an open-source NVR system that supports various detector acceleration hardware, including the Google Coral Edge TPU. While the default SSD MobileDet model works well in many case, in some cases YOLOv9 models can often offer improved detection accuracy and reduced false positives.
+Frigate is an open-source NVR system that supports various detector acceleration hardware, including the Google Coral Edge TPU. While the default SSD MobileDet model is an effective choice in many systems, running a YOLOv9 model may improve detection accuracy and reduce false positives.
 
-YOLOv9 can run almost entirely on the TPU of the Google Coral device. This detection method is both high-speed and low-energy, handling approximately 90 detections per second and using only a few Watts of power, while leaving the CPU available for other tasks. Another consideration is minimizing heat produced by the CPU, which can challenge my system's small fan.
+YOLOv9 can run efficiently on the EdgeTPU, and requires a small amount of post-processing by the CPU. This detection method is both high-speed and low-energy, handling approximately 100 detections per second and using only a few Watts of power, while leaving the CPU available for other tasks. Another consideration is minimizing heat produced by the CPU, which can challenge my system's small fan.
 
 There are other YOLO models with incompatible software license terms (eg Ultralytics is licensed with the AGPL). This approach is meant to be used to start with the GPL-licensed YOLOv9 model, which IS compatible with Frigate (also MIT-licensed). For more information, see [this discussion in Frigate's issues](https://github.com/blakeblackshear/frigate/discussions/15630#discussioncomment-11639733).
 
@@ -23,7 +23,7 @@ There are other YOLO models with incompatible software license terms (eg Ultraly
 
 * CPU is Intel 3rd Generation i7, 8GB RAM, circa 2012 (the built in GPU is not supported by OpenVINO)
 * Google Coral mini-PCIe card
-* 11ms detection speed when running a load test averaging 40 detections per second for images having size 320x320 pixels
+* 10ms detection speed when running a load test averaging 40 detections per second for images having size 320x320 pixels
 * zero skipped frames
 * Detector CPU usage varies between 15% and 20%
 
@@ -31,19 +31,15 @@ Regarding CPU usage, all YOLO models (pre YOLO v10) use the CPU during post-proc
 
 ## Model Input Size, Detection Sensitivity, and Run Time
 
-There are currently two versions of YOLO v9 for use with this plugin:
+There are currently two versions of YOLO v9 model weights available for download that can be used with this plugin:
 
 * [YOLO v9 "small" 320x320 input size](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_320_int8_edgetpu.tflite)
 
-This version runs in 10ms on the reference system which is quite old. Faster performance is possible when running on a faster CPU. With a detection speed of 10ms, it should allow one Coral device to perform detections on 100 images per second. Note that there can be multiple detections run for a single frame from the video feed, if there are multiple separate areas where motion gets detected. All 334 operations that are part of the model run on the Google Coral TPU.
+This version takes 10ms to run detections on my old system, and should run a bit faster on newer systems. This translates to a capacity of 100 detections per second. Note that there can be multiple detections run for a single frame from the video feed, if there are multiple separate areas where motion gets detected. According to the EdgeTPU compiler, all 334 operations that are part of the model run on the Google Coral TPU.
 
 * [YOLO v9 "small" 512x512 input size](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_512_int8_edgetpu.tflite)
 
-This model runs in about 21ms. It can detect smaller objects relative to the full frame size. It might be preferable in situations where it is important to detect small or faraway objects. All but 2 of the 334 operations in the model run on the Google Coral TPU, and the 2 that do not run at the end of the model's sequence which means the slowdown is minimal. The main reason for the slower operation is the larger tensor sizes. The operating temperature of this model is around 60 degrees C when running a 40 fps load test, versus 50 degrees for the 320x320 model above.
-
-Note that Frigate typically sends a portion of the overall image from the camera, which it calls a "Region". The regions are determined by a motion detection method that looks for areas with clusters of motion. For example, on a still day, a region might be tightly cropped around a cat walking across a lawn. On a windy autumn day with many leaves or rain creating motion in the overall image, the region of motion could be the entire image. Frigate next resizes the region to match the detection model's input size, then sends it to the detector.
-
-To understand how Frigate uses motion to trigger object detection processing, see [this explanation in the Frigate FAQ](https://docs.frigate.video/configuration/masks/#further-clarification).
+This model runs in about 21ms. It can detect smaller objects relative to the full frame size when compared with the 320x320 size version of the model. It might be preferable in situations where it is important to detect small or faraway objects within a large region of motion. All but 2 of the 334 operations in the model run on the Google Coral TPU, and the 2 that do not run at the end of the model's sequence which means the slowdown is minimal. The main reason for the slower operation is the larger tensor sizes.
 
 Other versions of YOLO may run with this plugin, but they are not supported or offered for download here.
 
@@ -140,6 +136,10 @@ This modified version of edgetpu_tfl.py replaces the standard version of the plu
 4. It then post-processes the raw output from the YOLO model to transform it into the format expected by Frigate (e.g., converting bounding box coordinates, handling confidence scores).
 5. The processed detections are returned to Frigate.
 
+Note that Frigate does not automatically send the entire image from the camera to the detector. Instead, it looks for areas in the image that changed from previous frames, and sends only these regions with motion to the detector. There can be more than one region sent per frame from the camera. For example, on a still day, a region might be tightly cropped around a cat walking across a lawn. On a windy autumn day with many leaves or rain creating motion in the overall image, the region of motion could be the entire image or there could be multiple regions sent to the detector. Frigate next resizes the region to match the detection model's input size, then sends it to the detector.
+
+To understand how Frigate uses motion to trigger object detection processing, see [this explanation in the Frigate FAQ](https://docs.frigate.video/configuration/masks/#further-clarification) and a live view of motion regions is in Frigate's "Debug" view in the Settings page..
+
 ## Lessons Learned Getting YOLO v9 to Run on Google Coral
 
 It is possible to convert the pre-trained weights for YOLO from PyTorch format to ONNX and then to TFLite and then compile for EdgeTPU, which runs on Google Coral. However, simple conversions of the models available for download perform poorly on the Coral, because it uses operations that are not appropriate for the 8-bit limitation of Google Coral. This leads to a total loss of information and zero detections. The following changes to the YOLO model structure enable the information to be preserved accurately through the sequence of operations run on Google Coral. The goal is to let the Coral perform all the convolution operations, and then send the data for post-processing on the CPU.
@@ -148,10 +148,10 @@ It is possible to convert the pre-trained weights for YOLO from PyTorch format t
 * **Send Logit scores** to the CPU for post-processing to transform them into probabilities. The Coral cannot do the sigmoid() transformation.
 * **Decode boxes and run Non-Maximum Supression (NMS) on the CPU** because the Coral cannot run these operations efficiently.
 * **Separate tensors for each quantization scale** to preserve precision.
-* **Data size limits are tricky.** For example, using a non-standard order of dimensions (BNC) in the boxes tensor enables it to run entirely on the TPU, but with the standard order (BCN) some operations must either run on the CPU or be done repeatedly on smaller chunks. 
+* **Data size limits are tricky.** For example, using a non-standard order of dimensions (BNC) in the boxes tensor enables it to run entirely on the TPU, but with the standard order (BCN) some operations must either run on the CPU or be done repeatedly on smaller chunks. Coral has a limited amount of on-chip RAM for caching the intermediate results of the operations, and if it needs more it will use the (slower) system RAM.
 * **Post-processing takes time** Even after optimization, I estimate one-third of the 10ms detection time involves post-processing the output from the model running on Google Coral.
 
-Applying those lessons lets the Google Coral run all the convolutiuon operations on its TPU for a YOLO v9 "s" model with size 320x320 pixels. The resulting model uses 7.2MB out of the 8MB of cache space available on the Coral device.
+Applying those lessons lets the Google Coral run all of the convolutiuon operations on its TPU for a YOLO v9 "s" model with size 320x320 pixels. The resulting model uses 385kB of off-chip RAM, which slows down the process. It is possible to do some of the post-processing decoding on the TPU, but it is slower than the CPU for those tasks.
 
 ## Contributing
 
