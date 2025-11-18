@@ -75,6 +75,11 @@ class EdgeTpuTfl(DetectionApi):
         self.model_height = detector_config.model.height
 
         self.min_score = 0.4
+        try:
+            self.min_score = detector_config.model.min_score
+        except AttributeError:
+            pass
+
         self.max_detections = 20
 
         model_type = detector_config.model.model_type
@@ -82,11 +87,12 @@ class EdgeTpuTfl(DetectionApi):
 
         if self.yolo_model:
             logger.info(f"Preparing YOLO postprocessing for {len(self.tensor_output_details)}-tensor output")
-            if len(self.tensor_output_details) in [2,3]:
-                self._generate_anchors_and_strides()
-                self.min_logit_value = np.log(self.min_score / (1 - self.min_score))
+            if len(self.tensor_output_details) > 1: # expecting 2 or 3
                 self.reg_max = 16 # = dfl_channels // 4  # 64 // 4 = 16 # YOLO standard
-                self.project = np.arange(self.reg_max, dtype=np.float32)
+                self.min_logit_value = np.log(self.min_score / (1 - self.min_score)) # for filtering
+                self._generate_anchors_and_strides() # for decoding bounding box DFL information
+                self.project = np.arange(self.reg_max, dtype=np.float32) # for decoding bounding box DFL information
+
                 # determine YOLO tensor indices for boxes and class_scores based on shape
                 # the tensors have shapes (B, N, C) where N is the number of candidate detections (=2100 for 320x320)
                 # this should work properly EXCEPT if the number of classes is exactly 64, then it might guess wrong
@@ -99,16 +105,17 @@ class EdgeTpuTfl(DetectionApi):
                     if len(x["shape"]) == 3 and x["shape"][2] == 64:
                         self.output_boxes_index = i
                     elif len(x["shape"]) == 3 and x["shape"][2] == 1:
+                        # this tensor is optional. It can accelerate post-processing by about 2ms
                         self.output_max_scores_index = i
-                        logger.info(f"Found class max scores pre-calculated by TPU for use in post-processing")
                     elif len(x["shape"]) == 3:
                         self.output_classes_index = i
                 if self.output_boxes_index is None or self.output_classes_index is None:
                     logger.warning(f"Unrecognized model output, unexpected tensor shapes.")
-                    self.output_classes_index = 0 # guess...
-                    self.output_boxes_index = 1 # might be correct
-                    logger.warning(f"Assuming classes tensor index is {self.output_classes_index} and boxes is {self.output_boxes_index}")
-                #logger.info(f"Using output index for classes : {self.output_classes_index} and boxes : {self.output_boxes_index}")
+                    self.output_classes_index = 0 if (self.output_boxes is None or self.output_classes_index == 1) else 1 # 0 is default guess
+                    self.output_boxes_index = 1 if (self.output_boxes_index == 0) else 0
+                classes_count = self.tensor_output_details[self.output_classes_index]["shape"][2]
+                accel_text = "" if self.output_max_scores_index is None else f", {self.output_max_scores_index} for max scores"
+                logger.info(f"Using tensor index {self.output_boxes_index} for boxes(DFL), {self.output_classes_index} for {classes_count} class scores{accel_text}")
 
         else:
             if model_type not in [ModelTypeEnum.ssd, None]:
@@ -126,6 +133,7 @@ class EdgeTpuTfl(DetectionApi):
             self.output_class_scores_index = None
 
     def _generate_anchors_and_strides(self):
+        # for decoding the bounding box DFL information into xy coordinates
         all_anchors = []
         all_strides = []
         strides = (8, 16, 32) # YOLO standard for small, medium, large detection heads
@@ -161,10 +169,13 @@ class EdgeTpuTfl(DetectionApi):
 
     def detect_raw(self, tensor_input):
         if self.yolo_model:
+            # TODO: check if data type of input and model match (uint8 or int8) and cast() if necessary
             if len(self.tensor_output_details) == 1:
                 # Single-tensor YOLO model
                 # model output is (1, NC+4, 2100) for 320x320 image size
                 # boxes as xywh (normalized to [0,1]) followed by NC class probabilities (also [0,1])
+                # BEWARE the tensor has only one quantization scale/zero_point, so it should be
+                # assembled carefully to have a range of [0,1] for all channels
                 self.interpreter.set_tensor(self.tensor_input_details[0]["index"], tensor_input)
                 self.interpreter.invoke()
 
@@ -180,7 +191,7 @@ class EdgeTpuTfl(DetectionApi):
 
                 return post_process_yolo(outputs, self.model_width, self.model_height)
 
-            if len(self.tensor_output_details) in [2,3]:
+            else:
                 # Multi-tensor YOLO model with (non-standard B(H*W)C output format).
                 # (the comments indicate the shape of tensors, using "2100" as the anchor count
                 # corresponding to an image size of 320x320, "NC" as number of classes,
@@ -234,12 +245,8 @@ class EdgeTpuTfl(DetectionApi):
                 boxes_details = self.tensor_output_details[self.output_boxes_index]
                 boxes_scale, boxes_zero_point = boxes_details['quantization']
                 # remove candidates with probabilities < threshold
-                boxes_output_quantized = self.interpreter.get_tensor(boxes_details['index'])  # (1, N, 64)
-                #logger.info(f"boxes_output_quantized shape is {boxes_output_quantized.shape}")
                 boxes_output_quantized_filtered = (self.interpreter.get_tensor(boxes_details['index'])[0])[mask]  # (N, 64)
-                #logger.info(f"boxes_output post mask shape : {boxes_output.shape}")
                 boxes_output_filtered = (boxes_output_quantized_filtered.astype(np.float32) - boxes_zero_point) * boxes_scale
-                #logger.info(f"dequantized boxes output {boxes_output.shape}")
                 count_filtered_proposals, dfl_channels = boxes_output_filtered.shape # (N, 16)
 
                 # 2. Decode DFL to distances (ltrb)
@@ -264,7 +271,7 @@ class EdgeTpuTfl(DetectionApi):
                     bboxes=boxes_filtered_decoded,
                     scores=max_scores_filtered_plus4, # logit scores shifted to be non-negative to allow min_score <50% or logit<0
                     score_threshold=(self.min_logit_value + 4.0), # cv2 asserts the min_score must be > 0 which means >50% probability
-                    nms_threshold=0.4
+                    nms_threshold=0.4 # should this be a model config setting?
                 )
                 #logger.info(f"NMS kept {indices.shape} boxes out of {np.sum(mask)}")
 
@@ -273,6 +280,7 @@ class EdgeTpuTfl(DetectionApi):
                     # leave the scores as quantized values because we will use them to get the class id (not the score itself)
                     scores_details = self.tensor_output_details[self.output_classes_index]
                     scores_output_quantized = self.interpreter.get_tensor(scores_details['index'])[0] # (2100, NC)
+                # create a mapping from the index in the nms output to the original index in the model output
                 orig_row = np.where(mask)[0]
                 if len(indices) > 0:
                     nms_indices = np.array(indices, dtype=np.int32).ravel()  # or .flatten()
@@ -290,7 +298,7 @@ class EdgeTpuTfl(DetectionApi):
 
                     detections[i] = [
                         class_id,
-                        1 / (1 + np.exp(-1 * (logit_plus4 - 4.0))),  # sigmoid
+                        1 / (1 + np.exp(-1 * (logit_plus4 - 4.0))),  # sigmoid to transform logit score to probability
                         bbox[1] / self.model_height,
                         bbox[0] / self.model_width,
                         bbox[3] / self.model_height,
