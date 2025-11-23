@@ -33,7 +33,7 @@ Regarding CPU usage, all YOLO models (pre YOLO v10) use the CPU during post-proc
 
 There are currently two versions of YOLO v9 model weights available for download that can be used with this plugin:
 
-* [YOLO v9 "small" 320x320 input size](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_320_int8_edgetpu.tflite)
+* [YOLO v9 "small" 320x320 input size](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.0/yolov9-s-relu6-best_320_int8_edgetpu.tflite) **recommended**
 
 This version takes 10ms to run detections on my old system, and should run a bit faster on newer systems. This translates to a capacity of 100 detections per second. Note that there can be multiple detections run for a single frame from the video feed, if there are multiple separate areas where motion gets detected. According to the EdgeTPU compiler, all 334 operations that are part of the model run on the Google Coral TPU.
 
@@ -47,7 +47,7 @@ Other versions of YOLO may run with this plugin, but they are not supported or o
 
 | Model | Size | mAP 50% | Detection Time |
 |---|---|---|---|
-| [YOLO v9 s](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_320_int8_edgetpu.tflite) (**recommended**) | 320x320 | 40.6% | 10ms |
+| [YOLO v9 s](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.0/yolov9-s-relu6-best_320_int8_edgetpu.tflite) (**recommended**) | 320x320 | 40.6% | 10ms |
 | [YOLO v9 s](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_512_int8_edgetpu.tflite) | 512x512 | 44.3% | 21ms |
 | [SSD/MobileNet](https://github.com/google-coral/test_data/raw/release-frogfish/ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite) (Frigate's default for Coral) | 320x320 | 25.6% | 8ms |
 
@@ -72,7 +72,7 @@ Create a directory on your host system to store the plugin file. For example, yo
 sudo mkdir -p /opt/frigate-plugins
 cd /opt/frigate-plugins
 # download weights
-sudo wget https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_320_int8_edgetpu.tflite
+sudo wget https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.0/yolov9-s-relu6-best_320_int8_edgetpu.tflite
 # download plugin
 sudo wget https://raw.githubusercontent.com/dbro/frigate-detector-edgetpu-yolo9/main/edgetpu_tfl.py
 # download labels
@@ -95,7 +95,7 @@ frigate:
     # ... existing volumes ...
     - /opt/frigate-plugins/edgetpu_tfl.py:/opt/frigate/frigate/detectors/plugins/edgetpu_tfl.py:ro
     - /opt/frigate-plugins/labels-coco17.txt:/opt/frigate/models/labels-coco17.txt:ro
-    - /opt/frigate-plugins/yolov9-s-relu6-tpumax_320_int8_edgetpu.tflite:/opt/frigate/models/yolov9-s-relu6-tpumax_320_int8_edgetpu.tflite:ro
+    - /opt/frigate-plugins/yolov9-s-relu6-best_320_int8_edgetpu.tflite:/opt/frigate/models/yolov9-s-relu6-best_320_int8_edgetpu.tflite:ro
   # ... rest of frigate service ...
 ```
 
@@ -116,7 +116,7 @@ In your config.yml, in the model: section, add the model_type parameter as shown
 model:
   model_type: yolo-generic
   labelmap_path: /opt/frigate/models/labels-coco17.txt
-  path: /opt/frigate/models/yolov9-s-relu6-tpumax_320_int8_edgetpu.tflite
+  path: /opt/frigate/models/yolov9-s-relu6-best_320_int8_edgetpu.tflite
   # Optionally specify the model dimensions (these are the same as Frigate's default 320x320)
   width: 320
   height: 320
