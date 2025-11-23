@@ -8,7 +8,7 @@ These performance benchmarks were measured using the models available for downlo
 
 In addition to a system with docker installed, download the COCO validation images and labels here:
 
-* [COCO validation images](https://www.google.com/url?sa=E&q=http%3A%2F%2Fimages.cocodataset.org%2Fzips%2Fval2017.zip)
+* [COCO validation images](http://images.cocodataset.org/zips/val2017.zip)
 * [labels](https://huggingface.co/datasets/merve/coco/blob/main/annotations/instances_train2017.json)
 
 ## Example commands
