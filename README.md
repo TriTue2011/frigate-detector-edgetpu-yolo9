@@ -43,6 +43,16 @@ This model runs in about 21ms. It can detect smaller objects relative to the ful
 
 Other versions of YOLO may run with this plugin, but they are not supported or offered for download here.
 
+## Performance Benchmarks
+
+| Model | Size | mAP 50% | Detection Time |
+|---|---|---|---|
+| [YOLO v9 s](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_320_int8_edgetpu.tflite) (**recommended**) | 320x320 | 40.6% | 10ms |
+| [YOLO v9 s](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_512_int8_edgetpu.tflite) | 512x512 | 44.3% | 21ms |
+| [SSD/MobileNet](https://github.com/google-coral/test_data/raw/release-frogfish/ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite) (Frigate's default for Coral) | 320x320 | 25.6% | 8ms |
+
+These performance benchmarks were measured using the models available for download here, running on Coral TPU hardware. The images used for validation were [COCO validation images](https://www.google.com/url?sa=E&q=http%3A%2F%2Fimages.cocodataset.org%2Fzips%2Fval2017.zip) and [labels](https://huggingface.co/datasets/merve/coco/blob/main/annotations/instances_train2017.json). The threshold for minimum score was 0.4, and the NMS threshold was 0.4. mAP50 is the industry-standard accuracy score that considers a detection "correct" only if the predicted bounding box overlaps the real object by at least 50%.
+
 ## Prerequisites
 
 Before you begin, ensure you have:
