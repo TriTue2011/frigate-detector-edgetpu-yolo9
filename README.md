@@ -45,13 +45,15 @@ Other versions of YOLO may run with this plugin, but they are not supported or o
 
 ## Performance Benchmarks
 
-| Model | Size | mAP 50% | Detection Time |
-|---|---|---|---|
-| [YOLO v9 s](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.0/yolov9-s-relu6-best_320_int8_edgetpu.tflite) (**recommended**) | 320x320 | 40.6% | 10ms |
-| [YOLO v9 s](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_512_int8_edgetpu.tflite) | 512x512 | 44.3% | 21ms |
-| [SSD/MobileNet](https://github.com/google-coral/test_data/raw/release-frogfish/ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite) (Frigate's default for Coral) | 320x320 | 25.6% | 8ms |
+| Device | Model | Size | mAP 50% | Detection Time |
+|---|---|---|---|---|
+| Coral | [YOLO v9 s](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.0/yolov9-s-relu6-best_320_int8_edgetpu.tflite) (**recommended**) | 320x320 | 40.6% | 10ms |
+| Coral | [YOLO v9 s](https://github.com/dbro/frigate-detector-edgetpu-yolo9/releases/download/v1.5/yolov9-s-relu6-tpumax_512_int8_edgetpu.tflite) | 512x512 | 44.3% | 21ms |
+| Coral | [SSD/MobileNet](https://github.com/google-coral/test_data/raw/release-frogfish/ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite) (Frigate's default for Coral) | 320x320 | 25.6% | 8ms |
+| OpenVINO (CPU) | YOLO v9 s ReLU6 ONNX | 320x320 | 48.5% | 133ms |
+| OpenVINO (CPU) | YOLO v9 s SiLU ONNX | 320x320 | 52.1% | 155ms |
 
-These performance benchmarks were measured using the models available for download here, running on Coral TPU hardware. The images used for validation were [COCO validation images](https://www.google.com/url?sa=E&q=http%3A%2F%2Fimages.cocodataset.org%2Fzips%2Fval2017.zip) and [labels](https://huggingface.co/datasets/merve/coco/blob/main/annotations/instances_train2017.json). The threshold for minimum score was 0.4, and the NMS threshold was 0.4. mAP50 is the industry-standard accuracy score that considers a detection "correct" only if the predicted bounding box overlaps the real object by at least 50%.
+The Coral performance benchmarks above were measured using the models available for download here, running on Coral TPU hardware. The images used for validation were [COCO validation images](https://www.google.com/url?sa=E&q=http%3A%2F%2Fimages.cocodataset.org%2Fzips%2Fval2017.zip) and [labels](https://huggingface.co/datasets/merve/coco/blob/main/annotations/instances_train2017.json). The threshold for minimum score was 0.4, and the NMS threshold was 0.4. mAP50 is the industry-standard accuracy score that considers a detection "correct" only if the predicted bounding box overlaps the real object by at least 50%. For comparison, the accuracy metrics for two ONNX OpenVINO models is shown, which indicate a 3.6 percentage point reduction in accuracy when using the ReLU6 activation function instead of SiLU, and a further 8 percentage point reduction when using the INT8 quantized version of the model. (The detection times for CPU inference with OpenVINO are likely to be much slower than iGPU or GPU performance.)
 
 ## Prerequisites
 
