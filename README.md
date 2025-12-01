@@ -159,9 +159,9 @@ It is possible to convert the pre-trained weights for YOLO from PyTorch format t
 * **Decode boxes and run Non-Maximum Supression (NMS) on the CPU** because the Coral cannot run these operations efficiently.
 * **Separate tensors for each quantization scale** to preserve precision.
 * **Data size limits are tricky.** For example, using a non-standard order of dimensions (BNC) in the boxes tensor enables it to run entirely on the TPU, but with the standard order (BCN) some operations must either run on the CPU or be done repeatedly on smaller chunks. Coral has a limited amount of on-chip RAM for caching the intermediate results of the operations, and if it needs more it will use the (slower) system RAM.
-* **Post-processing takes time** Even after optimization, I estimate one-third of the 10ms detection time involves post-processing the output from the model running on Google Coral.
+* **Post-processing takes time** Careful post-processing reduced the overall detection time by about 2ms.
 
-Applying those lessons lets the Google Coral run all of the convolutiuon operations on its TPU for a YOLO v9 "s" model with size 320x320 pixels. The resulting model uses 385kB of off-chip RAM, which slows down the process. It is possible to do some of the post-processing decoding on the TPU, but it is slower than the CPU for those tasks.
+Applying those lessons lets the Google Coral run all of the convolutiuon operations on its TPU for a YOLO v9 "s" model with size 320x320 pixels. The resulting model uses 385kB of off-chip RAM, which slows down the process.
 
 ## Contributing
 

@@ -58,8 +58,11 @@ def main(args):
     print(f"Model loaded. Type: {model_type}, Input Size: {args.size}x{args.size}")
 
     results = []
-    inference_times = []
-    postprocess_times = []
+    
+    # Timings
+    tpu_times = []
+    nms_times = []
+    overhead_times = [] # Capture time spent in int8 conversion/python overhead
 
     print(f"Starting inference on {len(img_ids)} images...")
     
@@ -76,49 +79,52 @@ def main(args):
         original_h, original_w = frame.shape[:2]
 
         # --- PREPROCESSING ---
-        # Frigate simply resizes the input region to model size.
-        # Since we are passing the whole image as the "region", we simple-resize it.
-        # This "squashes" the image if aspect ratio differs from model (usually square).
+        # Resize and ensure RGB (standard Frigate flow)
         input_frame = cv2.resize(frame, (args.size, args.size), interpolation=cv2.INTER_LINEAR)
-        
-        # Convert to RGB (Frigate does this as it receives YUV usually, but cv2 is BGR)
         input_frame = cv2.cvtColor(input_frame, cv2.COLOR_BGR2RGB)
-        
-        # Add batch dimension
         input_tensor = np.expand_dims(input_frame, axis=0)
 
         # --- INFERENCE ---
-        # detector.detect_raw expects standard uint8 tensor (if quantized)
-        detections = detector.detect_raw(input_tensor)
+        # We wrap the call to measure total Python time vs Internal TPU time
+        start_wall = time.perf_counter()
+        
+        # pass uint8; the shim handles the int8 cast if needed
+        detections = detector.detect_raw(input_tensor) 
+        
+        end_wall = time.perf_counter()
         
         # Record Timings
-        inference_times.append(detector.last_inference_time * 1000)
-        postprocess_times.append(detector.last_postprocess_time * 1000)
+        # detector.last_inference_time is pure TPU invoke time
+        # detector.last_postprocess_time is pure NMS/decoding time
+        tpu_ms = detector.last_inference_time * 1000
+        nms_ms = detector.last_postprocess_time * 1000
+        wall_ms = (end_wall - start_wall) * 1000
+        
+        # "Overhead" is the time spent transforming input (int8 cast) + function call overhead
+        overhead_ms = max(0, wall_ms - tpu_ms - nms_ms)
+        
+        tpu_times.append(tpu_ms)
+        nms_times.append(nms_ms)
+        overhead_times.append(overhead_ms)
 
         # --- FORMATTING RESULTS ---
-        # Frigate returns: [class_id, score, ymin, xmin, ymax, xmax] (normalized 0-1)
         for det in detections:
             class_id, score, ymin, xmin, ymax, xmax = det
             
-            if score < 0.01: continue # Filter empty rows
+            if score < 0.05: continue # Slightly higher thresh for Benchmark speed
             
             # Map Model Class ID to COCO Class ID
             if int(class_id) not in FRIGATE_TO_COCO:
-                # If the model predicts something we don't map (unlikely with the subset), skip
                 continue
                 
             coco_category_id = FRIGATE_TO_COCO[int(class_id)]
 
-            # Denormalize to Original Image Coordinates
-            # Note: xmin is relative to model width (320). 
-            # We multiply by original_w to get back to absolute coordinates, 
-            # implicitly reversing the "squash".
+            # Denormalize
             abs_x = xmin * original_w
             abs_y = ymin * original_h
             abs_w = (xmax - xmin) * original_w
             abs_h = (ymax - ymin) * original_h
 
-            # COCO format: [x, y, width, height]
             result = {
                 "image_id": img_id,
                 "category_id": coco_category_id,
@@ -128,9 +134,11 @@ def main(args):
             results.append(result)
 
     print(f"\nInference Complete.")
-    print(f"Avg TPU Inference Time: {np.mean(inference_times):.2f} ms")
-    print(f"Avg CPU NMS Time:       {np.mean(postprocess_times):.2f} ms")
-    print(f"Total Latency:          {np.mean(inference_times) + np.mean(postprocess_times):.2f} ms")
+    print(f"Avg Preprocess/Cast:    {np.mean(overhead_times):.2f} ms (Includes int8 conversion if active)")
+    print(f"Avg TPU Inference:      {np.mean(tpu_times):.2f} ms")
+    print(f"Avg CPU Postprocess:    {np.mean(nms_times):.2f} ms")
+    print(f"--------------------------------")
+    print(f"Avg Total Latency:      {np.mean(overhead_times) + np.mean(tpu_times) + np.mean(nms_times):.2f} ms")
 
     # 3. Calculate mAP
     if not results:

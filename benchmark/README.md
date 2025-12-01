@@ -11,7 +11,7 @@ In addition to a system with docker installed, download the COCO validation imag
 * [COCO validation images](http://images.cocodataset.org/zips/val2017.zip)
 * [labels](https://huggingface.co/datasets/merve/coco/blob/main/annotations/instances_train2017.json)
 
-## Example commands
+## Example command to measure speed and accuracy using COCO validation images
 
 Make sure there are no other processes running that use the Coral device, ie. stop the Frigate container.
 
@@ -29,4 +29,26 @@ docker run -it --rm \
   --size 320 \
   --coco_ann /coco/instances_val2017.json \
   --coco_img_dir /coco/val2017/
+```
+
+## Example command to run inference on a single image
+
+Make sure there are no other processes running that use the Coral device, ie. stop the Frigate container.
+
+```
+docker build -t benchmark .
+
+docker run -it --rm \
+  --entrypoint python \
+  --privileged \
+  --device /dev/apex_0 \
+  -v $(pwd):/app \
+  -v /path/to/your/models:/models \
+  benchmark \
+  detect_image.py \
+  --model /models/yolov9-s-relu6_320_edgetpu.tflite \
+  --size 320 \
+  --labels /models/labels-coco17.txt \
+  --image AbbeyRoad.jpg \
+  --output AbbeyRoad-detected-yolov9-s-relu6-320.jpg
 ```
