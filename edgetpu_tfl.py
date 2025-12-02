@@ -81,6 +81,10 @@ class EdgeTpuTfl(DetectionApi):
             pass
 
         self.max_detections = 20
+        try:
+            self.max_detections = detector_config.model.max_detections
+        except AttributeError:
+            pass
 
         model_type = detector_config.model.model_type
         self.yolo_model = model_type == ModelTypeEnum.yologeneric
@@ -96,25 +100,37 @@ class EdgeTpuTfl(DetectionApi):
                 self._generate_anchors_and_strides() # for decoding bounding box DFL information
                 self.project = np.arange(self.reg_max, dtype=np.float32) # for decoding bounding box DFL information
 
-                # determine YOLO tensor indices for boxes and class_scores based on shape
+                # determine YOLO tensor indices and quantization scales for boxes and class_scores
+                # the tensor ordering and names are not reliable, so use tensor shape to detect
+                # which tensor holds boxes or class scores
                 # the tensors have shapes (B, N, C) where N is the number of candidate detections (=2100 for 320x320)
                 # this should work properly EXCEPT if the number of classes is exactly 64, then it might guess wrong
-                self.output_boxes_index = None
-                self.output_classes_index = None
+                output_boxes_index = None
+                output_classes_index = None
                 for i, x in enumerate(self.tensor_output_details):
                     #logger.info(f"tensor[{i}] found with nominal index {x['index']} and shape {x['shape']}")
-                    # the nominal index seems to start at 1 instead of 0, so we don't use it
+                    # the nominal index seems to start at 1 instead of 0, handle it carefully
                     if len(x["shape"]) == 3 and x["shape"][2] == 64:
-                        self.output_boxes_index = i
+                        output_boxes_index = i
                     elif len(x["shape"]) == 3 and x["shape"][2] > 1:
                         # require the number of classes to be more than 1 to differentiate from (not used) max score tensor
-                        self.output_classes_index = i
-                if self.output_boxes_index is None or self.output_classes_index is None:
+                        output_classes_index = i
+                if output_boxes_index is None or output_classes_index is None:
                     logger.warning(f"Unrecognized model output, unexpected tensor shapes.")
-                    self.output_classes_index = 0 if (self.output_boxes is None or self.output_classes_index == 1) else 1 # 0 is default guess
-                    self.output_boxes_index = 1 if (self.output_boxes_index == 0) else 0
-                classes_count = self.tensor_output_details[self.output_classes_index]["shape"][2]
-                logger.info(f"Using tensor index {self.output_boxes_index} for boxes(DFL), {self.output_classes_index} for {classes_count} class scores")
+                    output_classes_index = 0 if (output_boxes_index is None or output_classes_index == 1) else 1 # 0 is default guess
+                    output_boxes_index = 1 if (output_boxes_index == 0) else 0
+                scores_details = self.tensor_output_details[output_classes_index]
+                classes_count = scores_details["shape"][2]
+                self.scores_tensor_index = scores_details['index']
+                self.scores_scale, self.scores_zero_point = scores_details['quantization'] # constants
+                # calculate the quantized version of the min_score
+                self.min_score_quantized = int((self.min_logit_value / self.scores_scale) + self.scores_zero_point)
+                self.logit_shift_to_positive_values = int((128 + self.scores_zero_point) * self.scores_scale) + 10 # round up
+
+                boxes_details = self.tensor_output_details[output_boxes_index]
+                self.boxes_tensor_index = boxes_details['index']
+                self.boxes_scale, self.boxes_zero_point = boxes_details['quantization'] # constants
+                logger.info(f"Using tensor index {output_boxes_index} for boxes(DFL), {output_classes_index} for {classes_count} class scores")
 
         else:
             if model_type not in [ModelTypeEnum.ssd, None]:
@@ -202,32 +218,27 @@ class EdgeTpuTfl(DetectionApi):
                 # to preserve precision in the useful range between ~2% and 98%
                 # and because NMS requires the min_score parameter to be >= 0
 
-                # Start by getting the quantization scaling info to translate thresholds into quantized amounts
-                # but don't dequantize scores data yet, wait until the low-confidence candidates
+                # don't dequantize scores data yet, wait until the low-confidence candidates
                 # are filtered out from the overall result set. This reduces the work and makes post-processing faster.
                 # this method works with raw quantized numbers when possible, which relies on the
                 # value of the scale factor to be >0. This speeds up max and argmax operations.
                 # Get max confidence for each detection and create the mask to filter low confidence detections
                 detections = np.zeros((self.max_detections, 6), np.float32) # initialize zero results
-                scores_details = self.tensor_output_details[self.output_classes_index]
-                scores_scale, scores_zero_point = scores_details['quantization']
-                min_score_quantized = int((self.min_logit_value / scores_scale) + scores_zero_point) # constant
-                scores_output_quantized = self.interpreter.get_tensor(scores_details['index'])[0] # (2100, NC)
+                scores_output_quantized = self.interpreter.get_tensor(self.scores_tensor_index)[0] # (2100, NC)
                 max_scores_quantized = np.max(scores_output_quantized, axis=1)  # (2100,)
-                mask = max_scores_quantized >= min_score_quantized  # (2100,)
+                mask = max_scores_quantized >= self.min_score_quantized  # (2100,)
 
                 if not np.any(mask):
                     return detections # empty results
 
-                max_scores_filtered_plus4 = ((max_scores_quantized[mask] - scores_zero_point) * scores_scale) + 4.0  # (N,1) shifted logit values
+                max_scores_filtered_shiftedpositive = ((max_scores_quantized[mask] - self.scores_zero_point) * self.scores_scale) + \
+                    self.logit_shift_to_positive_values  # (N,1) shifted logit values
                 scores_output_quantized_filtered = scores_output_quantized[mask]
 
                 # dequantize boxes. NMS needs them to be in float format
-                boxes_details = self.tensor_output_details[self.output_boxes_index]
-                boxes_scale, boxes_zero_point = boxes_details['quantization']
                 # remove candidates with probabilities < threshold
-                boxes_output_quantized_filtered = (self.interpreter.get_tensor(boxes_details['index'])[0])[mask]  # (N, 64)
-                boxes_output_filtered = (boxes_output_quantized_filtered.astype(np.float32) - boxes_zero_point) * boxes_scale
+                boxes_output_quantized_filtered = (self.interpreter.get_tensor(self.boxes_tensor_index)[0])[mask]  # (N, 64)
+                boxes_output_filtered = (boxes_output_quantized_filtered.astype(np.float32) - self.boxes_zero_point) * self.boxes_scale
 
                 # 2. Decode DFL to distances (ltrb)
                 dfl_distributions = boxes_output_filtered.reshape(-1, 4, self.reg_max)  # (N, 4, 16)
@@ -250,11 +261,10 @@ class EdgeTpuTfl(DetectionApi):
                 # 9. Apply NMS. Use logit scores here to defer sigmoid() until after filtering out redundant boxes
                 indices = cv2.dnn.NMSBoxes(
                     bboxes=boxes_filtered_decoded,
-                    scores=max_scores_filtered_plus4, # logit scores shifted to be non-negative to allow min_score <50% or logit<0
-                    score_threshold=(self.min_logit_value + 4.0), # cv2 asserts the min_score must be > 0 which means >50% probability
+                    scores=max_scores_filtered_shiftedpositive, # logit scores shifted to be non-negative to allow min_score <50% or logit<0
+                    score_threshold=(self.min_logit_value + self.logit_shift_to_positive_values), # cv2 asserts the min_score must be > 0 which means >50% probability
                     nms_threshold=0.4 # should this be a model config setting?
                 )
-                #logger.info(f"NMS kept {indices.shape} boxes out of {np.sum(mask)}")
                 num_detections = len(indices)
                 if num_detections == 0:
                     return detections # empty results
@@ -268,7 +278,7 @@ class EdgeTpuTfl(DetectionApi):
 
                 # Extract the final boxes and scores using fancy indexing
                 final_boxes = boxes_filtered_decoded[nms_indices]
-                final_scores_logits = max_scores_filtered_plus4[nms_indices] - 4.0 # Unshifted logits
+                final_scores_logits = max_scores_filtered_shiftedpositive[nms_indices] - self.logit_shift_to_positive_values # Unshifted logits
 
                 # Detections array format: [class_id, score, ymin, xmin, ymax, xmax]
                 detections[:num_detections, 0] = class_ids_post_nms
