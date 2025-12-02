@@ -12,6 +12,7 @@ from frigate.detectors.detector_config import BaseDetectorConfig, ModelTypeEnum
 from frigate.util.model import post_process_yolo
 
 import time
+import math
 
 try:
     from tflite_runtime.interpreter import Interpreter, load_delegate
@@ -125,7 +126,7 @@ class EdgeTpuTfl(DetectionApi):
                 self.scores_scale, self.scores_zero_point = scores_details['quantization'] # constants
                 # calculate the quantized version of the min_score
                 self.min_score_quantized = int((self.min_logit_value / self.scores_scale) + self.scores_zero_point)
-                self.logit_shift_to_positive_values = int((128 + self.scores_zero_point) * self.scores_scale) + 10 # round up
+                self.logit_shift_to_positive_values = max(0, math.ceil((128 + self.scores_zero_point) * self.scores_scale)) + 1 # round up
 
                 boxes_details = self.tensor_output_details[output_boxes_index]
                 self.boxes_tensor_index = boxes_details['index']
