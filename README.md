@@ -1,5 +1,7 @@
 # frigate-detector-edgetpu-yolo9
 
+***MERGED INTO FRIGATE*** The [pull request to add YOLO v9 support to the main Frigate repository](https://github.com/blakeblackshear/frigate/pull/21124) was accepted on December 2 2025. This feature will be included in a future release of Frigate.
+
 This repository provides a custom detector plugin for [Frigate](https://github.com/blakeblackshear/frigate), specifically designed to enable the Google Coral Edge TPU to run a **YOLOv9** model to detect objects visible in camera feeds. The plugin handles the necessary post-processing for YOLO model outputs, making them compatible with Frigate's detection pipeline without modifying Frigate's core source code. YOLOv9 model weights can be downloaded here as well, see the release notes and installation instructions.
 
 ![abbeyroad-detections](https://github.com/user-attachments/assets/a4dfbe6f-2ed3-43f1-9697-6ea119e463fe)
